@@ -1,6 +1,7 @@
 # Module 4: Storage and Configuration
 
 ## 🎯 Learning Objectives
+
 - Master the differences between Volumes, Persistent Volumes, and Persistent Volume Claims
 - Implement advanced ConfigMaps and Secrets management strategies
 - Configure Storage Classes for dynamic provisioning
@@ -8,6 +9,7 @@
 - Handle configuration updates and secret rotation
 
 ## 📁 Module Structure
+
 ```
 Module-04-Storage-Configuration/
 ├── README.md (this file)
@@ -76,6 +78,7 @@ Module-04-Storage-Configuration/
 ### Volumes vs Persistent Volumes vs PVCs
 
 #### Volumes (Pod-level Storage)
+
 - **Lifecycle**: Tied to pod lifecycle
 - **Scope**: Single pod
 - **Types**: emptyDir, hostPath, configMap, secret, etc.
@@ -96,6 +99,7 @@ spec:
 ```
 
 #### Persistent Volumes (Cluster-level Storage)
+
 - **Lifecycle**: Independent of pods
 - **Scope**: Cluster-wide resource
 - **Management**: Created by administrators or dynamic provisioning
@@ -118,6 +122,7 @@ spec:
 ```
 
 #### Persistent Volume Claims (Storage Requests)
+
 - **Lifecycle**: Independent of pods, tied to namespace
 - **Scope**: Namespace resource
 - **Purpose**: Request storage with specific requirements
@@ -168,6 +173,7 @@ volumeBindingMode: WaitForFirstConsumer
 ```
 
 #### Common Provisioners
+
 - **AWS**: `kubernetes.io/aws-ebs`, `efs.csi.aws.com`
 - **GCP**: `kubernetes.io/gce-pd`, `filestore.csi.storage.gke.io`
 - **Azure**: `kubernetes.io/azure-disk`, `file.csi.azure.com`
@@ -176,6 +182,7 @@ volumeBindingMode: WaitForFirstConsumer
 ### ConfigMaps vs Secrets
 
 #### ConfigMaps: Non-sensitive Configuration
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -198,6 +205,7 @@ data:
 ```
 
 #### Secrets: Sensitive Data
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -225,6 +233,7 @@ stringData:
 ### Configuration Injection Patterns
 
 #### Environment Variables
+
 ```yaml
 env:
 - name: DB_HOST
@@ -240,6 +249,7 @@ env:
 ```
 
 #### Volume Mounts
+
 ```yaml
 volumeMounts:
 - name: config-volume
@@ -261,6 +271,7 @@ volumes:
 ### Stateful Applications Patterns
 
 #### StatefulSet Characteristics
+
 - **Stable Network Identity**: Predictable pod names (app-0, app-1, app-2)
 - **Stable Storage**: Each pod gets its own PVC
 - **Ordered Deployment**: Pods created/updated/deleted in sequence
@@ -300,16 +311,19 @@ spec:
 ## 🛠️ Hands-on Exercises
 
 ### Prerequisites
+
 - Completed Modules 1-3
 - Kubernetes cluster with storage support
 - kubectl configured
 
 ### Exercise 4.1: Volume Types Exploration
+
 **Goal**: Understand different volume types and their behaviors
 
 **Files**: `resources/volume-fundamentals/`
 
 **Steps**:
+
 ```bash
 # Navigate to module directory
 cd Module-04-Storage-Configuration/
@@ -340,16 +354,19 @@ kubectl exec -it volume-demo -c reader -- cat /host-data/test.txt  # Should exis
 ```
 
 **Questions to Explore**:
+
 1. Which volume types survive pod restarts?
 2. When would you use each volume type?
 3. What are the security implications of hostPath volumes?
 
 ### Exercise 4.2: Persistent Volumes and Claims
+
 **Goal**: Master PV/PVC relationship and lifecycle
 
 **Files**: `resources/persistent-storage/pv-pvc-basic.yaml`
 
 **Steps**:
+
 ```bash
 # Create PV and PVC
 kubectl apply -f resources/persistent-storage/pv-pvc-basic.yaml
@@ -401,11 +418,13 @@ kubectl exec -it mysql-test -- mysql -uroot -ppassword123 -e "SHOW DATABASES;"
 ```
 
 ### Exercise 4.3: Dynamic Provisioning with Storage Classes
+
 **Goal**: Use storage classes for automatic PV creation
 
 **Files**: `resources/persistent-storage/dynamic-provisioning.yaml`
 
 **Steps**:
+
 ```bash
 # Check available storage classes
 kubectl get storageclass
@@ -425,11 +444,13 @@ kubectl get pvc dynamic-pvc -w
 ```
 
 ### Exercise 4.4: Advanced ConfigMap and Secret Patterns
+
 **Goal**: Implement sophisticated configuration management
 
 **Files**: `resources/configuration-management/`
 
 **Step 1 - ConfigMap Patterns**:
+
 ```bash
 # Deploy comprehensive configmap example
 kubectl apply -f resources/configuration-management/configmap-patterns.yaml
@@ -453,6 +474,7 @@ kubectl exec -it config-demo -- cat /etc/config/dynamic.conf
 ```
 
 **Step 2 - Secret Management**:
+
 ```bash
 # Create secrets with different methods
 kubectl create secret generic manual-secret \
@@ -470,11 +492,13 @@ kubectl exec -it secret-demo -- ls -la /etc/secrets/
 ```
 
 ### Exercise 4.5: Stateful Application Deployment
+
 **Goal**: Deploy and manage a complete stateful application
 
 **Files**: `resources/stateful-applications/mysql-stateful.yaml`
 
 **Steps**:
+
 ```bash
 # Deploy MySQL StatefulSet
 kubectl apply -f resources/stateful-applications/mysql-stateful.yaml
@@ -511,11 +535,13 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 ## 🎯 Practice Challenges
 
 ### Challenge 4.1: Complete WordPress Deployment
+
 **Location**: `resources/exercises/wordpress-complete/`
 
 **Goal**: Deploy a production-ready WordPress with MySQL backend
 
 **Requirements**:
+
 1. **MySQL Database**:
    - StatefulSet with persistent storage
    - Root password stored in secret
@@ -541,6 +567,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
    - Regular security updates
 
 **Your Deliverables**:
+
 1. All Kubernetes manifests
 2. Deployment automation scripts
 3. Backup and restore procedures
@@ -549,11 +576,13 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 6. Disaster recovery plan
 
 ### Challenge 4.2: Multi-Environment Configuration
+
 **Location**: `resources/exercises/multi-environment/`
 
 **Goal**: Implement configuration management for dev/staging/prod environments
 
 **Requirements**:
+
 1. **Environment-Specific Configs**:
    - Development: Debug enabled, local storage, mock services
    - Staging: Production-like, external services, monitoring
@@ -572,6 +601,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
    - Change approval workflows
 
 **Scenarios to Handle**:
+
 - Database connection strings per environment
 - Feature flags and A/B testing
 - External service endpoints
@@ -579,17 +609,20 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 - Resource limits and requests
 
 ### Challenge 4.3: Data Migration and Storage Upgrade
+
 **Location**: `resources/exercises/data-migration/`
 
 **Goal**: Implement data migration and storage upgrade procedures
 
 **Scenarios**:
+
 1. **Storage Class Migration**: Move from standard to SSD storage
 2. **Database Version Upgrade**: MySQL 5.7 to 8.0 with data migration
 3. **Backup and Restore**: Implement automated backup/restore procedures
 4. **Multi-Region Replication**: Setup cross-region data replication
 
 **Requirements**:
+
 - Zero-downtime migration strategies
 - Data integrity verification
 - Rollback procedures
@@ -598,21 +631,25 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 ## ❓ Knowledge Check Questions
 
 ### Storage Concepts
+
 1. **Explain the lifecycle differences between Volumes, PVs, and PVCs. When would you use each?**
 2. **How does dynamic provisioning work? What are the benefits and potential issues?**
 3. **Compare StatefulSet vs Deployment for database workloads. What are the trade-offs?**
 
 ### Configuration Management
+
 1. **When should you use ConfigMaps vs Secrets vs environment variables?**
 2. **How would you implement configuration hot-reloading in your applications?**
 3. **Design a secret rotation strategy for a production application.**
 
 ### Stateful Applications
+
 1. **What challenges do stateful applications face in Kubernetes? How does StatefulSet address them?**
 2. **How would you backup and restore data in a StatefulSet?**
 3. **Design a database clustering strategy using Kubernetes primitives.**
 
 ### Scenario-Based Questions
+
 1. **Your application needs to share files between multiple pod replicas. Design the storage strategy.**
 
 2. **You need to migrate a legacy application with large persistent data. Plan the migration approach.**
@@ -626,6 +663,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 **Context**: Build the complete storage and configuration infrastructure for a SaaS platform
 
 **Application Architecture**:
+
 - **Frontend**: React SPA with CDN assets
 - **API Gateway**: Kong/Nginx with SSL termination
 - **Backend Services**: Node.js microservices
@@ -634,6 +672,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 - **Background Jobs**: Queue processing, data analytics
 
 **Storage Requirements**:
+
 1. **Database Persistence**:
    - PostgreSQL cluster with replication
    - Redis cluster for caching
@@ -653,6 +692,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
    - Configuration validation
 
 **Technical Requirements**:
+
 1. **High Availability**: Multi-AZ deployment, data replication
 2. **Scalability**: Auto-scaling based on storage metrics
 3. **Security**: Encryption at rest/transit, secret management
@@ -661,6 +701,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 6. **Compliance**: Data retention policies, audit logging
 
 **Deliverables**:
+
 1. **Complete infrastructure manifests**
 2. **Storage architecture documentation**
 3. **Backup and disaster recovery procedures**
@@ -670,6 +711,7 @@ kubectl exec -it mysql-1 -- mysql -uroot -p$(kubectl get secret mysql-secret -o 
 7. **Security audit and compliance documentation**
 
 **Advanced Features**:
+
 - Implement storage tiering (hot/warm/cold)
 - Add data encryption and key management
 - Create automated data archival
@@ -762,6 +804,7 @@ kubectl describe storageclass <name>
 ## 📚 Additional Resources
 
 ### Official Documentation
+
 - [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
 - [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
 - [ConfigMaps](https://kubernetes.io/docs/concepts/configuration/configmap/)
@@ -769,10 +812,12 @@ kubectl describe storageclass <name>
 - [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
 
 ### Storage Deep Dives
+
 - [Volume Types](https://kubernetes.io/docs/concepts/storage/volumes/)
 - [CSI Drivers](https://kubernetes-csi.github.io/docs/)
 
 ### Configuration Management
+
 - [Configuration Best Practices](https://kubernetes.io/docs/concepts/configuration/overview/)
 - [Managing Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
 
@@ -792,6 +837,7 @@ Before moving to the next module, ensure you can:
 ## ➡️ Next Module
 
 Ready to continue? Proceed to **[Module 5: Advanced Workloads](../Module-05-Advanced-Workloads/README.md)** where you'll master:
+
 - DaemonSets, Jobs, and CronJobs
 - Init containers and sidecar patterns
 - Advanced workload scheduling and management

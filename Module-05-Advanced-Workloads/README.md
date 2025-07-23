@@ -1,6 +1,7 @@
 # Module 5: Advanced Workloads
 
 ## 🎯 Learning Objectives
+
 - Master different workload types: DaemonSets, StatefulSets, Jobs, and CronJobs
 - Understand when to use each workload type for specific scenarios
 - Implement advanced container patterns: init containers and sidecars
@@ -8,6 +9,7 @@
 - Handle batch processing, scheduled tasks, and system-level services
 
 ## 📁 Module Structure
+
 ```
 Module-05-Advanced-Workloads/
 ├── README.md (this file)
@@ -78,6 +80,7 @@ Module-05-Advanced-Workloads/
 ### DaemonSets: One Pod Per Node
 
 #### What are DaemonSets?
+
 - **Purpose**: Ensure exactly one pod runs on each node (or subset of nodes)
 - **Use Cases**: System daemons, monitoring agents, log collectors, network plugins
 - **Scaling**: Automatically scales with cluster size
@@ -94,6 +97,7 @@ Module-05-Advanced-Workloads/
 | **Storage Drivers** | CSI drivers | ✅ Storage interface per node |
 
 #### DaemonSet Configuration
+
 ```yaml
 apiVersion: apps/v1
 kind: DaemonSet
@@ -135,12 +139,14 @@ spec:
 ### StatefulSets: Ordered, Stable Applications
 
 #### StatefulSet Characteristics
+
 - **Stable Network Identity**: Predictable pod names (mysql-0, mysql-1, mysql-2)
 - **Stable Storage**: Each pod gets its own persistent volume
 - **Ordered Operations**: Sequential creation, updates, and deletion
 - **Headless Service**: Direct pod-to-pod communication
 
 #### When to Use StatefulSets
+
 - **Databases**: MySQL, PostgreSQL, MongoDB clusters
 - **Message Queues**: RabbitMQ, Apache Kafka
 - **Distributed Systems**: Elasticsearch, Cassandra, etcd
@@ -161,6 +167,7 @@ spec:
 #### Job Types and Patterns
 
 **Single Job (Run Once)**:
+
 ```yaml
 apiVersion: batch/v1
 kind: Job
@@ -178,6 +185,7 @@ spec:
 ```
 
 **Parallel Jobs (Multiple Pods)**:
+
 ```yaml
 apiVersion: batch/v1
 kind: Job
@@ -195,6 +203,7 @@ spec:
 ```
 
 **Work Queue Pattern**:
+
 ```yaml
 apiVersion: batch/v1
 kind: Job
@@ -217,6 +226,7 @@ spec:
 ### CronJobs: Scheduled Jobs
 
 #### CronJob Patterns
+
 ```yaml
 apiVersion: batch/v1
 kind: CronJob
@@ -253,6 +263,7 @@ spec:
 #### Init Container Patterns
 
 **Dependency Checking**:
+
 ```yaml
 initContainers:
 - name: wait-for-db
@@ -261,6 +272,7 @@ initContainers:
 ```
 
 **Data Preparation**:
+
 ```yaml
 initContainers:
 - name: setup-data
@@ -272,6 +284,7 @@ initContainers:
 ```
 
 **Configuration Download**:
+
 ```yaml
 initContainers:
 - name: config-downloader
@@ -287,16 +300,19 @@ initContainers:
 #### Sidecar Patterns
 
 **Log Processing Sidecar**:
+
 - **Main Container**: Application writes logs to shared volume
 - **Sidecar Container**: Processes, filters, and forwards logs
 - **Communication**: Shared filesystem
 
 **Proxy Sidecar (Ambassador Pattern)**:
+
 - **Main Container**: Application connects to localhost
 - **Sidecar Container**: Proxy handles external connections
 - **Benefits**: SSL termination, load balancing, retry logic
 
 **Adapter Sidecar**:
+
 - **Main Container**: Legacy application with non-standard output
 - **Sidecar Container**: Adapts output to standard format
 - **Use Case**: Monitoring integration, log formatting
@@ -304,16 +320,19 @@ initContainers:
 ## 🛠️ Hands-on Exercises
 
 ### Prerequisites
+
 - Completed Modules 1-4
 - Kubernetes cluster with multiple nodes (for DaemonSet testing)
 - kubectl configured
 
 ### Exercise 5.1: DaemonSet Deployment and Management
+
 **Goal**: Understand DaemonSet behavior and node-level services
 
 **Files**: `resources/workload-types/daemonset-examples.yaml`
 
 **Steps**:
+
 ```bash
 # Navigate to module directory
 cd Module-05-Advanced-Workloads/
@@ -342,6 +361,7 @@ kubectl get nodes
 ```
 
 **Advanced DaemonSet Testing**:
+
 ```bash
 # Test node selector
 kubectl label node <node-name> environment=production
@@ -373,11 +393,13 @@ kubectl get pods -l app=prod-monitor -o wide
 ```
 
 ### Exercise 5.2: StatefulSet Deep Dive
+
 **Goal**: Master StatefulSet behavior, scaling, and persistence
 
 **Files**: `resources/workload-types/statefulset-patterns.yaml`
 
 **Steps**:
+
 ```bash
 # Deploy a StatefulSet with persistent storage
 kubectl apply -f resources/workload-types/statefulset-patterns.yaml
@@ -408,6 +430,7 @@ kubectl exec -it web-stateful-0 -- cat /data/pod-data.txt
 ```
 
 **StatefulSet Networking Test**:
+
 ```bash
 # Create headless service
 kubectl apply -f - <<EOF
@@ -433,11 +456,13 @@ exit
 ```
 
 ### Exercise 5.3: Jobs and Batch Processing
+
 **Goal**: Implement various job patterns for batch processing
 
 **Files**: `resources/workload-types/job-patterns.yaml`
 
 **Steps**:
+
 ```bash
 # Single completion job
 kubectl apply -f - <<EOF
@@ -507,11 +532,13 @@ EOF
 ```
 
 ### Exercise 5.4: CronJobs and Scheduled Tasks
+
 **Goal**: Implement scheduled jobs with different patterns
 
 **Files**: `resources/workload-types/cronjob-examples.yaml`
 
 **Steps**:
+
 ```bash
 # Create a simple CronJob (runs every minute for testing)
 kubectl apply -f - <<EOF
@@ -574,11 +601,13 @@ kubectl patch cronjob hello-cron -p '{"spec":{"suspend":false}}'
 ```
 
 ### Exercise 5.5: Advanced Container Patterns
+
 **Goal**: Implement sophisticated multi-container patterns
 
 **Files**: `resources/container-patterns/`
 
 **Ambassador Pattern Example**:
+
 ```bash
 # Deploy app with ambassador proxy
 kubectl apply -f - <<EOF
@@ -635,6 +664,7 @@ curl http://localhost:8080
 ```
 
 **Adapter Pattern Example**:
+
 ```bash
 # Deploy app with adapter for monitoring
 kubectl apply -f - <<EOF
@@ -681,11 +711,13 @@ kubectl logs adapter-demo -c log-adapter
 ## 🎯 Practice Challenges
 
 ### Challenge 5.1: Complete Monitoring Stack
+
 **Location**: `resources/exercises/monitoring-stack/`
 
 **Goal**: Deploy a production-ready monitoring infrastructure
 
 **Architecture Requirements**:
+
 1. **Prometheus (StatefulSet)**:
    - Persistent storage for metrics
    - High availability with multiple replicas
@@ -707,6 +739,7 @@ kubectl logs adapter-demo -c log-adapter
    - Integration with external services
 
 **Your Deliverables**:
+
 1. All Kubernetes manifests for the monitoring stack
 2. Service discovery configuration for Prometheus
 3. Pre-built Grafana dashboards
@@ -715,11 +748,13 @@ kubectl logs adapter-demo -c log-adapter
 6. Performance tuning and resource optimization
 
 ### Challenge 5.2: Data Processing Pipeline
+
 **Location**: `resources/exercises/data-pipeline/`
 
 **Goal**: Build a complete ETL pipeline using Jobs and CronJobs
 
 **Pipeline Requirements**:
+
 1. **Data Ingestion (CronJob)**:
    - Scheduled data collection from external APIs
    - Data validation and cleansing
@@ -741,12 +776,14 @@ kubectl logs adapter-demo -c log-adapter
    - Compliance and retention policies
 
 **Technical Requirements**:
+
 - Fault tolerance and error recovery
 - Monitoring and alerting for pipeline health
 - Resource optimization for cost efficiency
 - Data lineage and audit trails
 
 ### Challenge 5.3: System Services Infrastructure
+
 **Location**: `resources/exercises/system-services/`
 
 **Goal**: Deploy essential cluster services using appropriate workload types
@@ -774,6 +811,7 @@ kubectl logs adapter-demo -c log-adapter
    - Performance optimization
 
 **Architecture Considerations**:
+
 - Resource management and node pressure
 - Security and access controls
 - Integration with external systems
@@ -782,21 +820,25 @@ kubectl logs adapter-demo -c log-adapter
 ## ❓ Knowledge Check Questions
 
 ### Workload Selection
+
 1. **You need to collect logs from every node in your cluster. Which workload type should you use and why?**
 2. **Compare running a database as a Deployment vs StatefulSet. What are the trade-offs?**
 3. **When would you use a Job vs CronJob vs Deployment for data processing tasks?**
 
 ### Container Patterns
+
 1. **Explain the difference between init containers and sidecar containers. Provide use cases for each.**
 2. **How would you implement the ambassador pattern? What problems does it solve?**
 3. **Design a logging architecture using sidecar containers. What are the benefits vs challenges?**
 
 ### Scaling and Management
+
 1. **How does StatefulSet scaling differ from Deployment scaling? Why is this important?**
 2. **What happens when a DaemonSet pod fails? How does Kubernetes handle recovery?**
 3. **Design a strategy for handling failed Jobs in a batch processing pipeline.**
 
 ### Scenario-Based Questions
+
 1. **Your application needs to process uploaded files. The processing can take 5-60 minutes per file. Design the workload architecture.**
 
 2. **You need to run a monthly report that processes TB of data. The job occasionally fails due to memory issues. How would you design this?**
@@ -810,6 +852,7 @@ kubectl logs adapter-demo -c log-adapter
 **Context**: Build a comprehensive microservices platform using all workload types
 
 **Application Architecture**:
+
 - **User-Facing Services**: Web frontend, mobile API, admin dashboard
 - **Business Services**: User management, product catalog, order processing
 - **Data Services**: Multiple databases, caches, search engines
@@ -845,6 +888,7 @@ kubectl logs adapter-demo -c log-adapter
    - Health checks and system maintenance
 
 **Technical Requirements**:
+
 1. **High Availability**: Multi-AZ deployment, fault tolerance
 2. **Scalability**: Auto-scaling, resource optimization
 3. **Security**: RBAC, network policies, secret management
@@ -853,6 +897,7 @@ kubectl logs adapter-demo -c log-adapter
 6. **Cost Optimization**: Resource right-sizing, spot instances
 
 **Deliverables**:
+
 1. **Complete architecture documentation** with workload justifications
 2. **All Kubernetes manifests** for every component
 3. **Deployment automation** with GitOps workflows
@@ -862,6 +907,7 @@ kubectl logs adapter-demo -c log-adapter
 7. **Security audit** and compliance documentation
 
 **Advanced Features**:
+
 - Implement custom operators for complex applications
 - Add service mesh for advanced traffic management
 - Create automated testing pipelines
@@ -951,22 +997,26 @@ kubectl exec -it <pod-name> -c <container-name> -- sh
 ## 📚 Additional Resources
 
 ### Official Documentation
+
 - [DaemonSets](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
 - [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
 - [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)
 - [CronJobs](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
 
 ### Advanced Patterns
+
 - [Init Containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/)
 - [Sidecar Containers](https://kubernetes.io/docs/concepts/cluster-administration/logging/#sidecar-container-with-logging-agent)
 - [Multi-Container Patterns](https://kubernetes.io/blog/2015/06/the-distributed-system-toolkit-patterns/)
 
 ### Scheduling and Resource Management
+
 - [Assign Pods to Nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/)
 - [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
 - [Pod Priority and Preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/)
 
 ### Batch Processing
+
 - [Parallel Processing with Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/#parallel-jobs)
 - [Work Queue Pattern](https://kubernetes.io/docs/tasks/job/coarse-parallel-processing-work-queue/)
 
@@ -987,6 +1037,7 @@ Before moving to the next module, ensure you can:
 ## ➡️ Next Module
 
 Ready to continue? Proceed to **[Module 6: Observability and Debugging](../Module-06-Observability-Debugging/README.md)** where you'll master:
+
 - Centralized logging strategies
 - Metrics collection and monitoring
 - Health checks and probes

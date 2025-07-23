@@ -1,11 +1,13 @@
 # Pod Debugging and Troubleshooting Guide
 
 ## 🎯 Overview
+
 This comprehensive guide provides systematic approaches to diagnosing and resolving common Kubernetes pod issues. Use this as your go-to reference for troubleshooting pod problems in any Kubernetes environment.
 
 ## 🔍 Diagnostic Methodology
 
 ### The PERC Method
+
 Use this systematic approach for any pod issue:
 
 1. **P**od Status - Check the current state
@@ -16,6 +18,7 @@ Use this systematic approach for any pod issue:
 ## 📊 Pod Status Reference
 
 ### Pod Phases
+
 | Phase | Description | Common Causes | Next Steps |
 |-------|-------------|---------------|------------|
 | **Pending** | Pod accepted but not running | Resource constraints, scheduling issues, image pull problems | Check node resources, scheduling constraints |
@@ -25,6 +28,7 @@ Use this systematic approach for any pod issue:
 | **Unknown** | Pod state cannot be determined | Node communication issues | Check node status and network |
 
 ### Container States
+
 | State | Description | Troubleshooting Actions |
 |-------|-------------|------------------------|
 | **Waiting** | Container not yet running | Check image availability, resource requests |
@@ -34,6 +38,7 @@ Use this systematic approach for any pod issue:
 ## 🛠️ Essential Diagnostic Commands
 
 ### Quick Status Check
+
 ```bash
 # Get pod overview
 kubectl get pods -o wide
@@ -58,6 +63,7 @@ kubectl get pod <pod-name> -o yaml
 ```
 
 ### Resource Investigation
+
 ```bash
 # Check node resources
 kubectl top nodes
@@ -76,6 +82,7 @@ kubectl describe node <node-name>
 ```
 
 ### Event Analysis
+
 ```bash
 # Get recent events
 kubectl get events --sort-by=.metadata.creationTimestamp
@@ -93,10 +100,12 @@ kubectl get events -o yaml
 ### 1. ImagePullBackOff / ErrImagePull
 
 **Symptoms:**
+
 - Pod stuck in `Pending` or `ErrImagePull` state
 - Events show image pull failures
 
 **Diagnostic Commands:**
+
 ```bash
 kubectl describe pod <pod-name>
 kubectl get events --field-selector involvedObject.name=<pod-name>
@@ -105,6 +114,7 @@ kubectl get events --field-selector involvedObject.name=<pod-name>
 **Common Causes & Solutions:**
 
 #### Incorrect Image Name
+
 ```bash
 # Check image name in pod spec
 kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].image}'
@@ -117,6 +127,7 @@ kubectl set image deployment/<deployment-name> <container>=<correct-image>
 ```
 
 #### Private Registry Authentication
+
 ```bash
 # Check if image pull secret exists
 kubectl get secrets
@@ -134,6 +145,7 @@ kubectl patch deployment <deployment-name> -p \
 ```
 
 #### Network/Registry Issues
+
 ```bash
 # Test registry connectivity from node
 kubectl run test-registry --image=busybox --rm -it -- wget -O- <registry-url>
@@ -149,11 +161,13 @@ kubectl get nodes -o wide  # Get node IPs
 ### 2. CrashLoopBackOff
 
 **Symptoms:**
+
 - Pod restarts continuously
 - Container exit code non-zero
 - Restart count keeps increasing
 
 **Diagnostic Commands:**
+
 ```bash
 kubectl describe pod <pod-name>
 kubectl logs <pod-name> --previous
@@ -163,6 +177,7 @@ kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].restartCou
 **Common Causes & Solutions:**
 
 #### Application Startup Errors
+
 ```bash
 # Check application logs
 kubectl logs <pod-name> --previous
@@ -178,6 +193,7 @@ kubectl get pod <pod-name> -o yaml | grep -A5 lastState
 ```
 
 **Example Fix:**
+
 ```yaml
 # Incorrect
 containers:
@@ -195,6 +211,7 @@ containers:
 ```
 
 #### Resource Limits Too Low
+
 ```bash
 # Check resource usage
 kubectl top pod <pod-name>
@@ -208,6 +225,7 @@ kubectl patch deployment <deployment-name> -p \
 ```
 
 #### Failed Health Checks
+
 ```bash
 # Check health check configuration
 kubectl get pod <pod-name> -o yaml | grep -A10 -B5 "probe"
@@ -223,11 +241,13 @@ kubectl patch deployment <deployment-name> -p \
 ### 3. Pending Pods
 
 **Symptoms:**
+
 - Pod stuck in `Pending` state
 - No containers started
 - Scheduling issues
 
 **Diagnostic Commands:**
+
 ```bash
 kubectl describe pod <pod-name>
 kubectl get nodes
@@ -237,6 +257,7 @@ kubectl describe node <node-name>
 **Common Causes & Solutions:**
 
 #### Insufficient Resources
+
 ```bash
 # Check node capacity
 kubectl top nodes
@@ -250,6 +271,7 @@ kubectl patch deployment <deployment-name> -p \
 ```
 
 #### Node Selector/Affinity Issues
+
 ```bash
 # Check pod node selector
 kubectl get pod <pod-name> -o yaml | grep -A5 nodeSelector
@@ -262,6 +284,7 @@ kubectl label node <node-name> <key>=<value>
 ```
 
 #### Taints and Tolerations
+
 ```bash
 # Check node taints
 kubectl describe node <node-name> | grep Taints
@@ -277,11 +300,13 @@ kubectl patch deployment <deployment-name> -p \
 ### 4. Volume Mount Issues
 
 **Symptoms:**
+
 - Containers crash on startup
 - Permission denied errors
 - Missing files/directories
 
 **Diagnostic Commands:**
+
 ```bash
 kubectl describe pod <pod-name>
 kubectl get pv,pvc
@@ -291,6 +316,7 @@ kubectl describe pvc <pvc-name>
 **Common Causes & Solutions:**
 
 #### PVC Not Bound
+
 ```bash
 # Check PVC status
 kubectl get pvc
@@ -318,6 +344,7 @@ EOF
 ```
 
 #### Permission Issues
+
 ```bash
 # Check security context
 kubectl get pod <pod-name> -o yaml | grep -A10 securityContext
@@ -328,6 +355,7 @@ kubectl patch deployment <deployment-name> -p \
 ```
 
 #### ConfigMap/Secret Not Found
+
 ```bash
 # Check if ConfigMap exists
 kubectl get configmap <configmap-name>
@@ -342,6 +370,7 @@ kubectl create configmap <configmap-name> --from-file=<file-path>
 ## 🔧 Advanced Debugging Techniques
 
 ### Interactive Debugging
+
 ```bash
 # Execute commands in running container
 kubectl exec -it <pod-name> -- /bin/bash
@@ -357,6 +386,7 @@ kubectl port-forward <pod-name> 8080:80
 ```
 
 ### Debug Container (Kubernetes 1.20+)
+
 ```bash
 # Add debug container to running pod
 kubectl debug <pod-name> -it --image=busybox --target=<container-name>
@@ -366,6 +396,7 @@ kubectl debug <pod-name> -it --image=busybox --copy-to=<debug-pod-name>
 ```
 
 ### Network Debugging
+
 ```bash
 # Test DNS resolution
 kubectl run dns-test --image=busybox --rm -it -- nslookup kubernetes.default
@@ -381,6 +412,7 @@ kubectl describe networkpolicy <policy-name>
 ## 📋 Troubleshooting Checklist
 
 ### Pre-Deployment Checklist
+
 - [ ] YAML syntax is valid
 - [ ] Image names are correct and accessible
 - [ ] Resource requests are reasonable
@@ -389,6 +421,7 @@ kubectl describe networkpolicy <policy-name>
 - [ ] Security contexts are appropriate
 
 ### Pod Startup Issues
+
 - [ ] Check pod status and phase
 - [ ] Review events for error messages
 - [ ] Verify image pull success
@@ -397,6 +430,7 @@ kubectl describe networkpolicy <policy-name>
 - [ ] Review security constraints
 
 ### Runtime Issues
+
 - [ ] Check application logs
 - [ ] Monitor resource usage
 - [ ] Verify health check endpoints
@@ -405,6 +439,7 @@ kubectl describe networkpolicy <policy-name>
 - [ ] Review security policies
 
 ### Performance Issues
+
 - [ ] Monitor CPU and memory usage
 - [ ] Check I/O wait times
 - [ ] Review network latency
@@ -415,6 +450,7 @@ kubectl describe networkpolicy <policy-name>
 ## 🎯 Scenario-Based Troubleshooting
 
 ### Scenario 1: Web Application Won't Start
+
 ```
 Symptoms:
 - Pod in CrashLoopBackOff
@@ -423,6 +459,7 @@ Symptoms:
 ```
 
 **Investigation Steps:**
+
 ```bash
 # 1. Check logs
 kubectl logs <pod-name> --previous
@@ -438,6 +475,7 @@ kubectl describe configmap <config-name>
 ```
 
 **Solution:**
+
 ```yaml
 # Fix port binding issue
 containers:
@@ -451,6 +489,7 @@ containers:
 ```
 
 ### Scenario 2: Database Connection Failures
+
 ```
 Symptoms:
 - Application logs show database connection errors
@@ -459,6 +498,7 @@ Symptoms:
 ```
 
 **Investigation Steps:**
+
 ```bash
 # 1. Test database connectivity
 kubectl exec <app-pod> -- telnet <db-service> 5432
@@ -474,6 +514,7 @@ kubectl get networkpolicy
 ```
 
 **Solution:**
+
 ```yaml
 # Ensure proper service configuration
 apiVersion: v1
@@ -489,6 +530,7 @@ spec:
 ```
 
 ### Scenario 3: Persistent Storage Issues
+
 ```
 Symptoms:
 - Data not persisting across pod restarts
@@ -497,6 +539,7 @@ Symptoms:
 ```
 
 **Investigation Steps:**
+
 ```bash
 # 1. Check PVC status
 kubectl get pvc
@@ -512,6 +555,7 @@ kubectl describe pod <pod-name>
 ```
 
 **Solution:**
+
 ```yaml
 # Fix volume permissions
 spec:
@@ -529,6 +573,7 @@ spec:
 ## 📚 Reference Materials
 
 ### Log Analysis Patterns
+
 ```bash
 # Common error patterns to search for
 kubectl logs <pod-name> | grep -i "error\|exception\|failed\|denied"
@@ -544,6 +589,7 @@ kubectl logs <pod-name> | grep -i "permission\|denied\|forbidden"
 ```
 
 ### Useful One-Liners
+
 ```bash
 # Get all pods with issues
 kubectl get pods --all-namespaces | grep -v Running
@@ -562,6 +608,7 @@ kubectl get pods -o wide
 ```
 
 ### Emergency Commands
+
 ```bash
 # Force delete stuck pod
 kubectl delete pod <pod-name> --grace-period=0 --force
@@ -579,30 +626,35 @@ kubectl run test-nginx --image=nginx --port=80 --rm -it
 ## 🎓 Best Practices for Prevention
 
 ### 1. Proactive Monitoring
+
 - Set up comprehensive logging
 - Implement health checks for all containers
 - Monitor resource usage trends
 - Set up alerting for pod failures
 
 ### 2. Configuration Management
+
 - Use ConfigMaps for configuration
 - Keep secrets secure and rotated
 - Version your configurations
 - Test configurations in staging
 
 ### 3. Resource Management
+
 - Always set resource requests and limits
 - Monitor actual usage vs requests
 - Use horizontal pod autoscaling
 - Plan for peak loads
 
 ### 4. Health Checks
+
 - Implement readiness probes for all services
 - Use liveness probes judiciously
 - Test health check endpoints regularly
 - Set appropriate timeout values
 
 ### 5. Documentation
+
 - Document known issues and solutions
 - Keep runbooks updated
 - Document architecture decisions
@@ -611,16 +663,19 @@ kubectl run test-nginx --image=nginx --port=80 --rm -it
 ## 🔗 Additional Resources
 
 ### Official Documentation
+
 - [Kubernetes Troubleshooting](https://kubernetes.io/docs/tasks/debug-application-cluster/)
 - [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
 - [Resource Management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
 
 ### Community Resources
+
 - [Kubernetes Slack](https://kubernetes.slack.com)
 - [Stack Overflow Kubernetes](https://stackoverflow.com/questions/tagged/kubernetes)
 - [Reddit r/kubernetes](https://reddit.com/r/kubernetes)
 
 ### Tools
+
 - [kubectl debugging guide](https://kubernetes.io/docs/reference/kubectl/cheatsheet/)
 - [kubectx/kubens](https://github.com/ahmetb/kubectx)
 - [stern](https://github.com/wercker/stern) - Multi-pod tail

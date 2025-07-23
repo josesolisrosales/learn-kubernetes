@@ -1,0 +1,457 @@
+# Network Policy Examples
+# This file demonstrates how to control network traffic between pods
+# using Kubernetes Network Policies for security and isolation
+
+---
+# Namespace for network policy demonstrations
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netpol-demo
+  labels:
+    purpose: network-policy-demo
+    environment: testing
+
+---
+# Frontend Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-app
+  namespace: netpol-demo
+  labels:
+    app: frontend
+    tier: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+      tier: web
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: web
+        role: client
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Backend API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: netpol-demo
+  labels:
+    app: backend
+    tier: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      tier: api
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: api
+        role: server
+    spec:
+      containers:
+      - name: api
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Database Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: netpol-demo
+  labels:
+    app: database
+    tier: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+      tier: data
+  template:
+    metadata:
+      labels:
+        app: database
+        tier: data
+        role: storage
+    spec:
+      containers:
+      - name: db
+        image: nginx:1.25-alpine  # Using nginx as a mock database
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# External Test Pod (simulates external attacker)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: external-pod
+  namespace: netpol-demo
+  labels:
+    app: external
+    role: attacker
+spec:
+  containers:
+  - name: external
+    image: alpine:3.18
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+
+---
+# Services for connectivity testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: netpol-demo
+spec:
+  selector:
+    app: frontend
+    tier: web
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: netpol-demo
+spec:
+  selector:
+    app: backend
+    tier: api
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: netpol-demo
+spec:
+  selector:
+    app: database
+    tier: data
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Network Policy 1: Deny All Ingress Traffic (Default Deny)
+# This creates a "default deny" policy for all pods in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: netpol-demo
+spec:
+  podSelector: {}  # Applies to all pods in namespace
+  policyTypes:
+  - Ingress
+  # No ingress rules = deny all ingress traffic
+
+---
+# Network Policy 2: Allow Frontend to Backend Communication
+# Frontend pods can access backend API pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: netpol-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+      tier: api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+          tier: web
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Network Policy 3: Allow Backend to Database Communication
+# Backend API pods can access database pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-database
+  namespace: netpol-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+      tier: data
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: backend
+          tier: api
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Network Policy 4: Allow External Access to Frontend
+# External traffic can reach frontend pods (simulates LoadBalancer/Ingress)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-to-frontend
+  namespace: netpol-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+      tier: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - {} # Allow all ingress (no restrictions)
+
+---
+# Network Policy 5: Egress Control for Database
+# Database pods can only communicate with specific external services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-egress-control
+  namespace: netpol-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+      tier: data
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow specific external IPs only (example: monitoring service)
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+        except:
+        - 10.0.1.0/24  # Block specific subnet
+  # Allow communication within namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: netpol-demo
+
+---
+# Network Policy 6: Cross-Namespace Communication
+# Allow specific pods from monitoring namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-namespace
+  namespace: netpol-demo
+spec:
+  podSelector:
+    matchLabels:
+      tier: api  # Apply to API tier pods
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# ConfigMap with testing instructions and examples
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: network-policy-guide
+  namespace: netpol-demo
+data:
+  README.md: |
+    # Network Policy Testing Guide
+
+    ## Overview
+    This demo shows various network policy patterns for pod-to-pod communication control.
+
+    ## Policies Implemented
+
+    ### 1. Default Deny (deny-all-ingress)
+    - Blocks all incoming traffic to all pods
+    - Creates security baseline: "deny by default"
+
+    ### 2. Frontend to Backend (allow-frontend-to-backend)
+    - Allows frontend pods to communicate with backend API
+    - Restricts access to port 80 only
+
+    ### 3. Backend to Database (allow-backend-to-database)
+    - Allows backend API to access database
+    - Prevents direct frontend access to database
+
+    ### 4. External to Frontend (allow-external-to-frontend)
+    - Allows external traffic to reach frontend
+    - Simulates public web application access
+
+    ### 5. Database Egress Control (database-egress-control)
+    - Controls outbound traffic from database pods
+    - Allows DNS, specific IP ranges only
+
+    ### 6. Cross-Namespace (allow-monitoring-namespace)
+    - Allows monitoring tools from other namespaces
+    - Demonstrates namespace-level access control
+
+    ## Testing Commands
+
+    ### Basic Connectivity Tests
+    ```bash
+    # Test allowed connection: frontend to backend
+    kubectl exec -it deployment/frontend-app -n netpol-demo -- wget -qO- http://backend-service
+
+    # Test blocked connection: external to backend (should fail)
+    kubectl exec -it external-pod -n netpol-demo -- wget -qO- http://backend-service
+
+    # Test allowed connection: backend to database
+    kubectl exec -it deployment/backend-api -n netpol-demo -- wget -qO- http://database-service
+    ```
+
+    ### Policy Validation
+    ```bash
+    # List all network policies
+    kubectl get networkpolicies -n netpol-demo
+
+    # Describe specific policy
+    kubectl describe networkpolicy deny-all-ingress -n netpol-demo
+
+    # Check policy effects
+    kubectl get pods -n netpol-demo -o wide
+    ```
+
+    ### Troubleshooting
+    ```bash
+    # Test from external pod (should be blocked for backend/database)
+    kubectl exec -it external-pod -n netpol-demo -- sh -c '
+        echo "Testing backend access (should fail):"
+        wget -qO- --timeout=5 http://backend-service 2>&1 || echo "BLOCKED as expected"
+        
+        echo "Testing database access (should fail):"
+        wget -qO- --timeout=5 http://database-service 2>&1 || echo "BLOCKED as expected"
+    '
+
+    # Test from frontend (should work for backend)
+    kubectl exec -it deployment/frontend-app -n netpol-demo -- sh -c '
+        echo "Testing backend access (should work):"
+        wget -qO- --timeout=5 http://backend-service 2>&1 && echo "ALLOWED as expected"
+    '
+    ```
+
+    ## Security Best Practices
+
+    1. **Default Deny**: Always start with deny-all policies
+    2. **Least Privilege**: Only allow necessary connections
+    3. **Explicit Rules**: Be specific about allowed traffic
+    4. **Regular Audits**: Review and update policies regularly
+    5. **Testing**: Verify policies work as intended
+
+    ## Common Patterns
+
+    - **Three-Tier Architecture**: Web -> API -> Database
+    - **Microservices**: Service-to-service communication
+    - **External Access**: LoadBalancer/Ingress integration
+    - **Cross-Namespace**: Multi-tenant applications
+    - **Egress Control**: Prevent data exfiltration
+
+  testing-script.sh: |
+    #!/bin/bash
+    # Network Policy Testing Script
+    
+    echo "=== Network Policy Demo Testing ==="
+    echo
+    
+    # Test 1: External to backend (should fail)
+    echo "Test 1: External pod trying to access backend (should be BLOCKED)"
+    kubectl exec -it external-pod -n netpol-demo -- timeout 5 wget -qO- http://backend-service 2>/dev/null && echo "❌ FAIL: Access allowed" || echo "✅ PASS: Access blocked"
+    echo
+    
+    # Test 2: Frontend to backend (should work)
+    echo "Test 2: Frontend pod accessing backend (should be ALLOWED)"
+    kubectl exec -it deployment/frontend-app -n netpol-demo -- timeout 5 wget -qO- http://backend-service >/dev/null 2>&1 && echo "✅ PASS: Access allowed" || echo "❌ FAIL: Access blocked"
+    echo
+    
+    # Test 3: Backend to database (should work)
+    echo "Test 3: Backend pod accessing database (should be ALLOWED)"
+    kubectl exec -it deployment/backend-api -n netpol-demo -- timeout 5 wget -qO- http://database-service >/dev/null 2>&1 && echo "✅ PASS: Access allowed" || echo "❌ FAIL: Access blocked"
+    echo
+    
+    # Test 4: Frontend to database (should fail)
+    echo "Test 4: Frontend pod trying to access database directly (should be BLOCKED)"
+    kubectl exec -it deployment/frontend-app -n netpol-demo -- timeout 5 wget -qO- http://database-service 2>/dev/null && echo "❌ FAIL: Access allowed" || echo "✅ PASS: Access blocked"
+    echo
+    
+    echo "=== Testing Complete ==="

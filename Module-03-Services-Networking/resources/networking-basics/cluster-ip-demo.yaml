@@ -1,0 +1,276 @@
+# ClusterIP Service Demo
+# This file demonstrates how ClusterIP services provide stable endpoints
+# for pod communication within the cluster
+
+---
+# Namespace for ClusterIP demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clusterip-demo
+  labels:
+    purpose: service-networking-demo
+
+---
+# Deployment for backend application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-app
+  namespace: clusterip-demo
+  labels:
+    app: backend
+    tier: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+      tier: api
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: api
+    spec:
+      containers:
+      - name: api-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: backend-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: backend-html
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        # Readiness probe to ensure pod is ready for traffic
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        # Liveness probe to restart unhealthy pods
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: backend-config
+        configMap:
+          name: backend-nginx-config
+      - name: backend-html
+        configMap:
+          name: backend-html-content
+
+---
+# ClusterIP Service (default type)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: clusterip-demo
+  labels:
+    app: backend
+    tier: api
+spec:
+  # type: ClusterIP is default, so we can omit it
+  selector:
+    app: backend
+    tier: api
+  ports:
+  - name: http
+    port: 80          # Service port (what clients connect to)
+    targetPort: 80    # Container port (where traffic is forwarded)
+    protocol: TCP
+  # ClusterIP is assigned automatically from service subnet
+  # Typically 10.96.0.0/12 range
+
+---
+# Client deployment to test service connectivity
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-app
+  namespace: clusterip-demo
+  labels:
+    app: client
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: client
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: client
+        tier: frontend
+    spec:
+      containers:
+      - name: client
+        image: alpine:3.18
+        command: ['sleep', '3600']
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+
+---
+# Debug pod for network testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-debug-pod
+  namespace: clusterip-demo
+  labels:
+    app: debug-tools
+    purpose: network-testing
+spec:
+  containers:
+  - name: debug-tools
+    image: nicolaka/netshoot:v0.11
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  restartPolicy: Always
+
+---
+# ConfigMap for backend nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-nginx-config
+  namespace: clusterip-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Add headers to show which pod served the request
+        add_header X-Pod-Name $hostname;
+        add_header X-Service-Name "backend-service";
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # API endpoint simulation
+        location /api/users {
+            access_log off;
+            return 200 "{\"users\": [\"alice\", \"bob\", \"charlie\"], \"pod\": \"$hostname\", \"service\": \"backend-service\"}\n";
+            add_header Content-Type application/json;
+        }
+
+        # Status endpoint
+        location /status {
+            access_log off;
+            return 200 "Service: backend-service\nPod: $hostname\nStatus: running\nTimestamp: $time_iso8601\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# ConfigMap for backend HTML content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-html-content
+  namespace: clusterip-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ClusterIP Service Demo</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+            .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .info-box { background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
+            .endpoint { background: #f3e5f5; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .success { color: #2e7d32; font-weight: bold; }
+            code { background: #f5f5f5; padding: 2px 5px; border-radius: 3px; }
+        </style>
+        <script>
+            // Show pod information dynamically
+            window.onload = function() {
+                document.getElementById('hostname').innerHTML = window.location.hostname || 'backend-service';
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔗 ClusterIP Service Demo</h1>
+            
+            <div class="info-box">
+                <h3>Service Information:</h3>
+                <p><strong>Service Name:</strong> backend-service</p>
+                <p><strong>Service Type:</strong> ClusterIP (Internal Only)</p>
+                <p><strong>Namespace:</strong> clusterip-demo</p>
+                <p><strong>Access URL:</strong> <span id="hostname"></span></p>
+            </div>
+
+            <h3>Available Endpoints:</h3>
+            <div class="endpoint">
+                <strong>/</strong> - This landing page
+            </div>
+            <div class="endpoint">
+                <strong>/health</strong> - Health check endpoint
+            </div>
+            <div class="endpoint">
+                <strong>/api/users</strong> - Sample API endpoint (JSON)
+            </div>
+            <div class="endpoint">
+                <strong>/status</strong> - Service status information
+            </div>
+
+            <h3>Testing Instructions:</h3>
+            <ol>
+                <li>Get service details: <code>kubectl get service backend-service -n clusterip-demo</code></li>
+                <li>Test from client pod: <code>kubectl exec -it deployment/client-app -n clusterip-demo -- wget -qO- http://backend-service</code></li>
+                <li>Test service discovery: <code>kubectl exec -it network-debug-pod -n clusterip-demo -- nslookup backend-service</code></li>
+                <li>Load balancing test: <code>kubectl exec -it network-debug-pod -n clusterip-demo -- sh -c 'for i in {1..10}; do curl -s http://backend-service/status | grep Pod; done'</code></li>
+            </ol>
+
+            <div class="info-box">
+                <p class="success">✅ ClusterIP Service provides:</p>
+                <ul>
+                    <li>Stable internal IP address (Service IP)</li>
+                    <li>DNS-based service discovery</li>
+                    <li>Load balancing across backend pods</li>
+                    <li>Internal cluster communication only</li>
+                </ul>
+            </div>
+        </div>
+    </body>
+    </html>

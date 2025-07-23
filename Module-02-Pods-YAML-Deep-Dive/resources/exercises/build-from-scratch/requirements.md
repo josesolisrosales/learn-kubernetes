@@ -1,14 +1,17 @@
 # Build from Scratch Exercise - Requirements
 
 ## 🎯 Objective
+
 Build a complete multi-tier web application from scratch using Kubernetes primitives, demonstrating mastery of pod anatomy, YAML structures, and deployment strategies.
 
 ## 📋 Project Requirements
 
 ### Application Architecture
+
 You must build a **3-tier web application** with the following components:
 
 #### 1. Frontend Tier
+
 - **Technology**: Static web server (nginx)
 - **Purpose**: Serve a React/Vue.js application (simulated with static HTML/CSS/JS)
 - **Requirements**:
@@ -19,6 +22,7 @@ You must build a **3-tier web application** with the following components:
   - Proper labeling for service discovery
 
 #### 2. Backend API Tier
+
 - **Technology**: Application server (can simulate with nginx + custom config)
 - **Purpose**: REST API endpoints for the frontend
 - **Requirements**:
@@ -29,6 +33,7 @@ You must build a **3-tier web application** with the following components:
   - Circuit breaker simulation (health check that can fail)
 
 #### 3. Data Tier
+
 - **Technology**: Database simulation (using busybox with persistent data)
 - **Purpose**: Data persistence layer
 - **Requirements**:
@@ -41,6 +46,7 @@ You must build a **3-tier web application** with the following components:
 ### 🔧 Technical Requirements
 
 #### Pod Specifications
+
 1. **Multi-container Patterns**:
    - At least one pod must demonstrate the sidecar pattern
    - At least one pod must use init containers
@@ -67,6 +73,7 @@ You must build a **3-tier web application** with the following components:
    - Canary deployment for one component
 
 #### Infrastructure Requirements
+
 1. **Networking**:
    - Services for each tier with appropriate types
    - Service discovery between tiers
@@ -86,6 +93,7 @@ You must build a **3-tier web application** with the following components:
    - Monitoring sidecar containers
 
 ### 📁 Deliverables Structure
+
 ```
 build-from-scratch/
 ├── requirements.md (this file)
@@ -126,6 +134,7 @@ build-from-scratch/
 ## 🎨 Detailed Specifications
 
 ### Frontend Application
+
 ```yaml
 # Example structure - you need to implement fully
 apiVersion: apps/v1
@@ -152,7 +161,8 @@ spec:
         # Sidecar for log collection
 ```
 
-#### Frontend Features to Implement:
+#### Frontend Features to Implement
+
 1. **Landing Page**: Welcome page with navigation
 2. **Product Catalog**: Display products from backend API
 3. **User Dashboard**: User information and preferences
@@ -160,6 +170,7 @@ spec:
 5. **Admin Panel**: Configuration and monitoring interface
 
 ### Backend API Application
+
 ```yaml
 # Example structure - implement the full specification
 apiVersion: apps/v1
@@ -185,7 +196,8 @@ spec:
         # Sidecar for log processing
 ```
 
-#### API Endpoints to Implement:
+#### API Endpoints to Implement
+
 1. **GET /api/health**: Health check endpoint
 2. **GET /api/ready**: Readiness check endpoint
 3. **GET /api/users**: List users (simulated data)
@@ -196,6 +208,7 @@ spec:
 8. **GET /api/config**: Current configuration
 
 ### Database Layer
+
 ```yaml
 # Example StatefulSet structure
 apiVersion: apps/v1
@@ -218,7 +231,8 @@ spec:
         # Sidecar for backup operations
 ```
 
-#### Database Features:
+#### Database Features
+
 1. **Data Persistence**: Use PersistentVolumeClaims
 2. **Initialization**: Scripts to set up initial data
 3. **Backup Simulation**: Regular backup to separate volume
@@ -228,6 +242,7 @@ spec:
 ## 🧪 Testing Requirements
 
 ### Functional Testing
+
 1. **End-to-End Flow**:
    - Frontend loads and displays data from backend
    - Backend successfully connects to database
@@ -241,6 +256,7 @@ spec:
    - Sidecar containers function properly
 
 ### Deployment Testing
+
 1. **Rolling Updates**:
    - Deploy new version without downtime
    - Verify zero-downtime deployment
@@ -258,6 +274,7 @@ spec:
    - Configuration errors
 
 ### Performance Testing
+
 1. **Resource Usage**:
    - Containers stay within resource limits
    - No memory leaks over time
@@ -271,6 +288,7 @@ spec:
 ## 📊 Success Criteria
 
 ### Basic Requirements (Must Have)
+
 - [ ] All three tiers deployed and running
 - [ ] Services can communicate between tiers
 - [ ] Health checks pass for all components
@@ -280,6 +298,7 @@ spec:
 - [ ] Basic logging implemented
 
 ### Intermediate Requirements (Should Have)
+
 - [ ] Multi-container patterns implemented (sidecar, init)
 - [ ] Rolling updates work without downtime
 - [ ] Rollback functionality demonstrated
@@ -289,6 +308,7 @@ spec:
 - [ ] Security contexts applied
 
 ### Advanced Requirements (Could Have)
+
 - [ ] Blue-green deployment implemented
 - [ ] Canary deployment demonstrated
 - [ ] Network policies configured
@@ -300,6 +320,7 @@ spec:
 ## 🔍 Evaluation Criteria
 
 ### Code Quality (30%)
+
 - YAML structure and organization
 - Proper use of Kubernetes resources
 - Configuration management best practices
@@ -307,6 +328,7 @@ spec:
 - Resource management
 
 ### Architecture (25%)
+
 - Multi-tier design implementation
 - Container patterns usage
 - Service communication design
@@ -314,6 +336,7 @@ spec:
 - Network architecture
 
 ### Deployment Strategy (20%)
+
 - Rolling update implementation
 - Blue-green deployment setup
 - Rollback capabilities
@@ -321,6 +344,7 @@ spec:
 - Canary deployment pattern
 
 ### Documentation (15%)
+
 - Architecture explanation
 - Deployment procedures
 - Testing documentation
@@ -328,6 +352,7 @@ spec:
 - Design decisions rationale
 
 ### Testing (10%)
+
 - Test coverage and procedures
 - Failure scenario handling
 - Performance validation
@@ -337,6 +362,7 @@ spec:
 ## 💡 Bonus Challenges
 
 ### Expert Level Extensions
+
 1. **Service Mesh Integration**: Add Istio sidecar proxies
 2. **GitOps Workflow**: Implement automated deployment pipeline
 3. **Observability Stack**: Full Prometheus/Grafana setup
@@ -346,6 +372,7 @@ spec:
 7. **Operators**: Build a simple operator for your application
 
 ### Innovation Points
+
 - Creative solutions to common problems
 - Novel use of Kubernetes features
 - Exceptional documentation and presentation
@@ -356,6 +383,7 @@ spec:
 ## 🚀 Getting Started
 
 ### Step 1: Planning Phase
+
 1. Review all requirements carefully
 2. Design your architecture diagram
 3. Plan your container strategies
@@ -363,6 +391,7 @@ spec:
 5. Plan your testing strategy
 
 ### Step 2: Implementation Phase
+
 1. Start with the database tier (foundational)
 2. Implement the backend API tier
 3. Build the frontend tier
@@ -370,6 +399,7 @@ spec:
 5. Implement deployment strategies
 
 ### Step 3: Testing Phase
+
 1. Test each component individually
 2. Test inter-component communication
 3. Test deployment strategies
@@ -377,6 +407,7 @@ spec:
 5. Performance testing
 
 ### Step 4: Documentation Phase
+
 1. Document architecture decisions
 2. Create deployment guides
 3. Write troubleshooting procedures
@@ -403,17 +434,20 @@ A: Use the troubleshooting guides, Kubernetes documentation, and community resou
 ## 📚 Resources
 
 ### Essential Documentation
+
 - [Kubernetes Pod Documentation](https://kubernetes.io/docs/concepts/workloads/pods/)
 - [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
 - [ConfigMaps and Secrets](https://kubernetes.io/docs/concepts/configuration/)
 - [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
 
 ### Best Practices
+
 - [Kubernetes Best Practices](https://kubernetes.io/docs/concepts/configuration/overview/)
 - [12-Factor App Methodology](https://12factor.net/)
 - [Container Security Best Practices](https://kubernetes.io/docs/concepts/security/)
 
 ### Tools and Utilities
+
 - [kubectl Cheat Sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/)
 - [YAML Validator](https://codebeautify.org/yaml-validator)
 - [Kubernetes Dashboard](https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/)

@@ -1,0 +1,197 @@
+# Pod-to-Pod Communication Demo
+# This file demonstrates direct pod-to-pod communication in Kubernetes
+# Pods can communicate directly using their IP addresses across the cluster
+
+---
+# Namespace for networking demos
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: networking-demo
+  labels:
+    purpose: networking-fundamentals
+
+---
+# Server Pod - will serve HTTP requests
+apiVersion: v1
+kind: Pod
+metadata:
+  name: server-pod
+  namespace: networking-demo
+  labels:
+    app: demo-server
+    role: backend
+    tier: server
+spec:
+  containers:
+  - name: nginx-server
+    image: nginx:1.25-alpine
+    ports:
+    - containerPort: 80
+      name: http
+      protocol: TCP
+    # Configure nginx to show pod information
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d/default.conf
+      subPath: default.conf
+    - name: html-content
+      mountPath: /usr/share/nginx/html/index.html
+      subPath: index.html
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  volumes:
+  - name: nginx-config
+    configMap:
+      name: nginx-server-config
+  - name: html-content
+    configMap:
+      name: server-html-content
+  restartPolicy: Always
+  dnsPolicy: ClusterFirst
+
+---
+# Client Pod - will test connectivity to server
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client-pod
+  namespace: networking-demo
+  labels:
+    app: demo-client
+    role: frontend
+    tier: client
+spec:
+  containers:
+  - name: network-client
+    image: busybox:1.36
+    # Keep container running for testing
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  restartPolicy: Always
+  dnsPolicy: ClusterFirst
+
+---
+# Test Pod on different node (if multi-node cluster)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: remote-client-pod
+  namespace: networking-demo
+  labels:
+    app: demo-remote-client
+    role: frontend
+    tier: client
+spec:
+  containers:
+  - name: network-client
+    image: alpine:3.18
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  # Try to schedule on different node than server-pod
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values: ["demo-server"]
+          topologyKey: kubernetes.io/hostname
+  restartPolicy: Always
+
+---
+# ConfigMap for nginx server configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-server-config
+  namespace: networking-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Add headers to show pod information
+        add_header X-Pod-Name $hostname;
+        add_header X-Pod-IP $server_addr;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Pod info endpoint
+        location /info {
+            access_log off;
+            return 200 "Pod: $hostname\nServer IP: $server_addr\nTime: $time_iso8601\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# ConfigMap for HTML content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-html-content
+  namespace: networking-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Pod-to-Pod Communication Demo</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .info { background: #f0f0f0; padding: 20px; border-radius: 5px; }
+            .success { color: green; }
+        </style>
+    </head>
+    <body>
+        <h1>🌐 Pod-to-Pod Communication Demo</h1>
+        <div class="info">
+            <h3>Server Pod Information:</h3>
+            <p><strong>Purpose:</strong> Demonstrate direct pod-to-pod communication</p>
+            <p><strong>Namespace:</strong> networking-demo</p>
+            <p><strong>Access:</strong> This pod can be reached directly via its IP address</p>
+        </div>
+        
+        <h3>Testing Instructions:</h3>
+        <ol>
+            <li>Get pod IPs: <code>kubectl get pods -o wide -n networking-demo</code></li>
+            <li>Test from client pod: <code>kubectl exec -it client-pod -n networking-demo -- wget -qO- http://&lt;server-pod-ip&gt;</code></li>
+            <li>Test ping: <code>kubectl exec -it client-pod -n networking-demo -- ping &lt;server-pod-ip&gt;</code></li>
+            <li>Check endpoints: <code>/health</code> and <code>/info</code></li>
+        </ol>
+
+        <p class="success">✅ If you can see this page, pod-to-pod communication is working!</p>
+    </body>
+    </html>
