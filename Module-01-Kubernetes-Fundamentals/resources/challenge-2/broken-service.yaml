@@ -1,0 +1,51 @@
+# Challenge 2: Troubleshooting Practice
+# This service has intentional errors - find and fix them!
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: broken-service
+  labels:
+    app: troubleshooting
+    exercise: challenge-2
+spec:
+  # ERROR 1: Selector that doesn't match any pods
+  selector:
+    app: nonexistent-app
+    tier: wrong-tier
+  
+  ports:
+  # ERROR 2: Invalid port configuration
+  - name: http
+    port: 80
+    targetPort: 8080  # Wrong target port for nginx
+    protocol: TCP
+  
+  # ERROR 3: Invalid service type
+  type: InvalidType
+
+---
+# Create a test pod that this service should connect to
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-nginx-pod
+  labels:
+    app: test-nginx
+    tier: frontend
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+
+# Instructions for students:
+# 1. Apply this file: kubectl apply -f broken-service.yaml
+# 2. Check service endpoints: kubectl get endpoints broken-service
+# 3. The endpoints should be empty - this indicates selector issues
+# 4. Use kubectl describe service broken-service to see configuration
+# 5. Fix the selector to match the test-nginx-pod labels
+# 6. Fix the targetPort to match nginx's actual port (80)
+# 7. Fix the service type (use ClusterIP)
+# 8. Verify endpoints appear: kubectl get endpoints broken-service

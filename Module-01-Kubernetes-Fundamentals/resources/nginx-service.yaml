@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  selector:
+    app: nginx
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
+---
+# Optional: NodePort service for external access during testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service-external
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  selector:
+    app: nginx
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30080
+    protocol: TCP
+  type: NodePort

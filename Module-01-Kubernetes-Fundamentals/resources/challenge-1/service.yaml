@@ -1,0 +1,44 @@
+# Challenge 1: Complete Application Setup
+# Service to expose the webapp deployment
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service
+  labels:
+    app: webapp
+    tier: frontend
+    environment: learning
+spec:
+  selector:
+    # TODO: Make sure these match your deployment labels
+    app: webapp
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
+
+---
+# Bonus: Create a NodePort service for external testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service-nodeport
+  labels:
+    app: webapp
+    tier: frontend
+    environment: learning
+spec:
+  selector:
+    app: webapp
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30081
+    protocol: TCP
+  type: NodePort

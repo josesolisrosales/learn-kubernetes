@@ -1,0 +1,51 @@
+# Challenge 2: Troubleshooting Practice
+# This pod has intentional errors - find and fix them!
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-pod
+  labels:
+    app: troubleshooting
+    exercise: challenge-2
+spec:
+  containers:
+  - name: web-server
+    # ERROR 1: This image doesn't exist
+    image: nginx:nonexistent-tag
+    ports:
+    - containerPort: 80
+    
+    # ERROR 2: Invalid resource format
+    resources:
+      requests:
+        memory: "invalid-memory-format"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    # ERROR 3: Environment variable referencing non-existent ConfigMap
+    env:
+    - name: CONFIG_VALUE
+      valueFrom:
+        configMapKeyRef:
+          name: nonexistent-configmap
+          key: some-key
+    
+    # ERROR 4: Invalid probe configuration
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 8080  # Wrong port - nginx runs on 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+
+# Instructions for students:
+# 1. Try to apply this file: kubectl apply -f broken-pod.yaml
+# 2. Use debugging commands to identify issues:
+#    - kubectl get pods
+#    - kubectl describe pod broken-pod
+#    - kubectl get events
+# 3. Fix each error and apply again
+# 4. Verify the pod is running successfully

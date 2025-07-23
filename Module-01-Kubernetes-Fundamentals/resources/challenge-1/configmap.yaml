@@ -1,0 +1,51 @@
+# Challenge 1: Complete Application Setup
+# ConfigMap with webapp configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-config
+  labels:
+    app: webapp
+    component: config
+    environment: learning
+data:
+  # Basic application settings
+  welcome_message: "Welcome to our Kubernetes Learning App!"
+  app_name: "Learning WebApp"
+  version: "1.0.0"
+  environment: "development"
+  
+  # Server configuration
+  server_port: "80"
+  server_timeout: "30"
+  max_requests: "100"
+  
+  # Feature toggles
+  debug_enabled: "true"
+  metrics_enabled: "true"
+  logging_level: "info"
+  
+  # Custom nginx configuration
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /config {
+            access_log off;
+            return 200 "App: Learning WebApp v1.0.0\n";
+            add_header Content-Type text/plain;
+        }
+    }

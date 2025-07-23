@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app: sample-app
+    component: config
+data:
+  # Database configuration
+  database_url: "postgresql://localhost:5432/myapp"
+  database_name: "myapp"
+  database_user: "app_user"
+  
+  # Application settings
+  debug_mode: "true"
+  log_level: "info"
+  max_connections: "100"
+  timeout_seconds: "30"
+  
+  # Feature flags
+  enable_metrics: "true"
+  enable_tracing: "false"
+  
+  # Custom configuration file
+  app.properties: |
+    # Application Properties
+    app.name=My Kubernetes App
+    app.version=1.0.0
+    app.environment=development
+    
+    # Server configuration
+    server.port=8080
+    server.host=0.0.0.0
+    
+    # Logging configuration
+    logging.level=INFO
+    logging.format=json

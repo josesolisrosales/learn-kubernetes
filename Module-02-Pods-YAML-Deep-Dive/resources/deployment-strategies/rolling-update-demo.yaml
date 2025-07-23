@@ -1,0 +1,694 @@
+# Rolling Update Deployment Strategy Demo
+# This file demonstrates comprehensive rolling update patterns and configurations
+
+# =============================================================================
+# SECTION 1: Basic Rolling Update Deployment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rolling-demo
+  labels:
+    app: rolling-demo
+    strategy: rolling-update
+  annotations:
+    description: "Demonstrates basic rolling update deployment strategy"
+    deployment.kubernetes.io/revision: "1"
+spec:
+  # Replica configuration
+  replicas: 5                           # Total number of desired pods
+  
+  # Rolling update strategy configuration
+  strategy:
+    type: RollingUpdate                 # Use rolling update strategy
+    rollingUpdate:
+      maxUnavailable: 1                 # Max pods that can be unavailable during update
+      maxSurge: 2                       # Max pods that can be created above desired number
+  
+  # Pod selection
+  selector:
+    matchLabels:
+      app: rolling-demo
+  
+  # Pod template
+  template:
+    metadata:
+      labels:
+        app: rolling-demo
+        version: v1                     # Version label for tracking
+      annotations:
+        config.checksum: "abc123"       # Configuration checksum for change detection
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21               # Initial version
+        ports:
+        - containerPort: 80
+          name: http
+        
+        # Resource requirements
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        # Health checks for proper rolling updates
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        
+        # Graceful shutdown configuration
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - "nginx -s quit; sleep 15"
+        
+        # Custom HTML to show version
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      
+      # Allow time for graceful shutdown
+      terminationGracePeriodSeconds: 30
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: rolling-demo-html
+
+---
+# ConfigMap with version-specific content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rolling-demo-html
+  labels:
+    app: rolling-demo
+    version: v1
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Rolling Update Demo - Version 1</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background-color: #e3f2fd;
+            }
+            .version { 
+                color: #1976d2; 
+                font-size: 24px; 
+                font-weight: bold;
+            }
+            .info { 
+                background: white; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin: 20px 0;
+            }
+        </style>
+        <script>
+            // Auto-refresh to show updates
+            setTimeout(() => location.reload(), 10000);
+        </script>
+    </head>
+    <body>
+        <h1>Rolling Update Demo</h1>
+        <div class="version">Version 1.0</div>
+        
+        <div class="info">
+            <h3>Pod Information:</h3>
+            <p><strong>Hostname:</strong> <span id="hostname"></span></p>
+            <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+            <p><strong>Status:</strong> Running Version 1</p>
+        </div>
+        
+        <div class="info">
+            <h3>Rolling Update Process:</h3>
+            <ol>
+                <li>Update image version: <code>kubectl set image deployment/rolling-demo web-app=nginx:1.22</code></li>
+                <li>Watch rollout: <code>kubectl rollout status deployment/rolling-demo</code></li>
+                <li>Check history: <code>kubectl rollout history deployment/rolling-demo</code></li>
+                <li>Rollback if needed: <code>kubectl rollout undo deployment/rolling-demo</code></li>
+            </ol>
+        </div>
+        
+        <script>
+            document.getElementById('hostname').textContent = window.location.hostname;
+            document.getElementById('timestamp').textContent = new Date().toISOString();
+        </script>
+        
+        <p><em>Page auto-refreshes every 10 seconds</em></p>
+    </body>
+    </html>
+
+---
+# Service to access the rolling update demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: rolling-demo-service
+  labels:
+    app: rolling-demo
+spec:
+  selector:
+    app: rolling-demo
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+
+---
+# =============================================================================
+# SECTION 2: Advanced Rolling Update with Canary Configuration
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: advanced-rolling-demo
+  labels:
+    app: advanced-rolling-demo
+    strategy: advanced-rolling
+  annotations:
+    description: "Advanced rolling update with fine-grained control"
+spec:
+  replicas: 10                          # Larger replica count for better demonstration
+  
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%               # Can use percentages instead of absolute numbers
+      maxSurge: 25%                     # 25% = 2-3 pods with 10 replicas
+  
+  # Slow rollout for observation
+  minReadySeconds: 10                   # Wait 10s after pod is ready before considering it available
+  progressDeadlineSeconds: 600          # Max time for deployment to make progress
+  revisionHistoryLimit: 10              # Keep 10 old ReplicaSets for rollback
+  
+  selector:
+    matchLabels:
+      app: advanced-rolling-demo
+  
+  template:
+    metadata:
+      labels:
+        app: advanced-rolling-demo
+        version: v1
+        deployment-id: "initial"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 9090
+          name: metrics
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        # Strict health checks for safer rollouts
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 2
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Startup probe for slow-starting applications
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10          # Allow up to 50 seconds for startup
+        
+        # Graceful termination
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - |
+                echo "Graceful shutdown initiated"
+                nginx -s quit
+                sleep 10
+        
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      
+      terminationGracePeriodSeconds: 30
+      
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: advanced-rolling-nginx-config
+      - name: html-content
+        configMap:
+          name: advanced-rolling-html
+
+---
+# Nginx configuration for health checks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: advanced-rolling-nginx-config
+  labels:
+    app: advanced-rolling-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Readiness check (can be more complex)
+        location /ready {
+            access_log off;
+            return 200 "ready\n";  
+            add_header Content-Type text/plain;
+        }
+        
+        # Main content
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        # Metrics endpoint (simulated)
+        location /metrics {
+            access_log off;
+            return 200 "# Simulated metrics\nnginx_up 1\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# HTML content for advanced demo
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: advanced-rolling-html
+  labels:
+    app: advanced-rolling-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Advanced Rolling Update Demo</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .version { 
+                font-size: 28px; 
+                font-weight: bold; 
+                margin-bottom: 20px;
+            }
+            .status { 
+                background: rgba(255,255,255,0.2); 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 15px 0;
+            }
+            .commands { 
+                background: rgba(0,0,0,0.3); 
+                padding: 15px; 
+                border-radius: 5px; 
+                font-family: monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Advanced Rolling Update Demo</h1>
+            <div class="version">Version 1.0 - Initial Release</div>
+            
+            <div class="status">
+                <h3>Deployment Status:</h3>
+                <p><strong>Strategy:</strong> RollingUpdate</p>
+                <p><strong>Max Unavailable:</strong> 25%</p>
+                <p><strong>Max Surge:</strong> 25%</p>
+                <p><strong>Min Ready Seconds:</strong> 10</p>
+            </div>
+            
+            <div class="status">
+                <h3>Update Commands:</h3>
+                <div class="commands">
+                    # Update to version 2<br>
+                    kubectl patch deployment advanced-rolling-demo -p '{"spec":{"template":{"metadata":{"labels":{"version":"v2"}}}}}'<br><br>
+                    
+                    # Update image<br>
+                    kubectl set image deployment/advanced-rolling-demo web-app=nginx:1.22<br><br>
+                    
+                    # Watch progress<br>
+                    kubectl rollout status deployment/advanced-rolling-demo --watch<br><br>
+                    
+                    # Pause rollout<br>
+                    kubectl rollout pause deployment/advanced-rolling-demo<br><br>
+                    
+                    # Resume rollout<br>
+                    kubectl rollout resume deployment/advanced-rolling-demo
+                </div>
+            </div>
+            
+            <div class="status">
+                <h3>Pod Information:</h3>
+                <p><strong>Pod Name:</strong> <span id="hostname"></span></p>
+                <p><strong>Load Time:</strong> <span id="loadtime"></span></p>
+                <p><strong>Health Status:</strong> ✅ Healthy</p>
+            </div>
+            
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+                document.getElementById('loadtime').textContent = new Date().toISOString();
+                
+                // Auto-refresh every 15 seconds
+                setTimeout(() => location.reload(), 15000);
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 3: Blue-Green Deployment Pattern (Using Deployments)
+# =============================================================================
+
+# Blue deployment (current production)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blue-green-blue
+  labels:
+    app: blue-green-demo
+    slot: blue
+    environment: production
+  annotations:
+    description: "Blue deployment in blue-green strategy"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: blue-green-demo
+      slot: blue
+  
+  template:
+    metadata:
+      labels:
+        app: blue-green-demo
+        slot: blue
+        version: v1
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: blue-deployment-html
+
+---
+# Green deployment (new version, not receiving traffic yet)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blue-green-green
+  labels:
+    app: blue-green-demo
+    slot: green
+    environment: staging
+  annotations:
+    description: "Green deployment in blue-green strategy"
+spec:
+  replicas: 0                           # Start with 0 replicas, scale up when deploying
+  selector:
+    matchLabels:
+      app: blue-green-demo
+      slot: green
+  
+  template:
+    metadata:
+      labels:
+        app: blue-green-demo
+        slot: green
+        version: v2
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.22                # New version
+        ports:
+        - containerPort: 80
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: green-deployment-html
+
+---
+# Production service (points to blue initially)
+apiVersion: v1
+kind: Service
+metadata:
+  name: blue-green-production
+  labels:
+    app: blue-green-demo
+    environment: production
+  annotations:
+    description: "Production service for blue-green deployment"
+spec:
+  selector:
+    app: blue-green-demo
+    slot: blue                          # Initially points to blue
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# Staging service (for testing green deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: blue-green-staging
+  labels:
+    app: blue-green-demo
+    environment: staging
+spec:
+  selector:
+    app: blue-green-demo
+    slot: green                         # Points to green for testing
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# ConfigMaps for blue and green versions
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blue-deployment-html
+  labels:
+    app: blue-green-demo
+    slot: blue
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Blue-Green Demo - Blue Version</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔵 Blue Deployment</h1>
+            <h2>Version 1.0 - Production</h2>
+            <p><strong>Status:</strong> Currently serving production traffic</p>
+            <p><strong>Deployment:</strong> Blue</p>
+            <p><strong>Image:</strong> nginx:1.21</p>
+            <p><strong>Environment:</strong> Production</p>
+            
+            <h3>Blue-Green Deployment Process:</h3>
+            <ol>
+                <li>Deploy to green: <code>kubectl scale deployment blue-green-green --replicas=3</code></li>
+                <li>Test green deployment via staging service</li>
+                <li>Switch traffic: <code>kubectl patch service blue-green-production -p '{"spec":{"selector":{"slot":"green"}}}'</code></li>
+                <li>Scale down blue: <code>kubectl scale deployment blue-green-blue --replicas=0</code></li>
+            </ol>
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: green-deployment-html
+  labels:
+    app: blue-green-demo
+    slot: green
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Blue-Green Demo - Green Version</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🟢 Green Deployment</h1>
+            <h2>Version 2.0 - New Release</h2>
+            <p><strong>Status:</strong> Ready for production traffic</p>
+            <p><strong>Deployment:</strong> Green</p>
+            <p><strong>Image:</strong> nginx:1.22</p>
+            <p><strong>Environment:</strong> Staging → Production</p>
+            
+            <h3>Rollback Process:</h3>
+            <ol>
+                <li>Switch back to blue: <code>kubectl patch service blue-green-production -p '{"spec":{"selector":{"slot":"blue"}}}'</code></li>
+                <li>Scale up blue: <code>kubectl scale deployment blue-green-blue --replicas=3</code></li>
+                <li>Scale down green: <code>kubectl scale deployment blue-green-green --replicas=0</code></li>
+            </ol>
+            
+            <h3>New Features in Version 2.0:</h3>
+            <ul>
+                <li>✨ Updated nginx to 1.22</li>
+                <li>🚀 Improved performance</li>
+                <li>🔒 Enhanced security</li>
+                <li>📊 Better monitoring</li>
+            </ul>
+        </div>
+    </body>
+    </html>

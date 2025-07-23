@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+  labels:
+    app: sample-app
+    tier: backend
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sleep", "3600"]
+    
+    # Environment variables from ConfigMap
+    env:
+    - name: DATABASE_URL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: database_url
+    - name: DEBUG_MODE
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: debug_mode
+    - name: MAX_CONNECTIONS
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: max_connections
+    - name: LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: log_level
+    
+    # Mount ConfigMap as volume (alternative approach)
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+      readOnly: true
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+      items:
+      - key: app.properties
+        path: app.properties

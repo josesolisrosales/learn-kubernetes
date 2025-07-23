@@ -1,0 +1,719 @@
+# Pod Spec Deep Dive - Comprehensive Guide to Pod Specifications
+# This file demonstrates all major pod specification options with detailed explanations
+
+# =============================================================================
+# SECTION 1: Container Specification Deep Dive
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-spec-demo
+  labels:
+    app: spec-demo
+    pattern: container-configuration
+  annotations:
+    description: "Comprehensive container specification examples"
+spec:
+  containers:
+  - name: main-application
+    # Image specification
+    image: nginx:1.21.6                    # Specific version (recommended)
+    imagePullPolicy: IfNotPresent          # Always, Never, IfNotPresent
+    
+    # Command and arguments
+    command: ["/bin/sh"]                   # Override container entrypoint
+    args:                                  # Override container CMD
+    - "-c"
+    - |
+      echo "Starting application with custom command..."
+      echo "Environment: $ENVIRONMENT"
+      echo "Pod IP: $POD_IP"
+      echo "Node Name: $NODE_NAME"
+      
+      # Start nginx in background
+      nginx -g "daemon off;" &
+      NGINX_PID=$!
+      
+      # Keep container running and show status
+      while true; do
+        echo "Application running, PID: $NGINX_PID, Time: $(date)"
+        sleep 30
+      done
+    
+    # Working directory
+    workingDir: /usr/share/nginx/html
+    
+    # Ports configuration
+    ports:
+    - name: http                           # Named port (useful for services)
+      containerPort: 80                    # Port inside container
+      protocol: TCP                        # TCP (default), UDP, SCTP
+    - name: https
+      containerPort: 443
+      protocol: TCP
+    - name: metrics
+      containerPort: 9090
+      protocol: TCP
+    
+    # Environment variables (multiple methods)
+    env:
+    # Direct value
+    - name: ENVIRONMENT
+      value: "production"
+    
+    # From pod metadata
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    
+    # From container metadata
+    - name: CPU_REQUEST
+      valueFrom:
+        resourceFieldRef:
+          resource: requests.cpu
+    - name: MEMORY_LIMIT
+      valueFrom:
+        resourceFieldRef:
+          resource: limits.memory
+    
+    # From ConfigMap
+    - name: CONFIG_VALUE
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: config-key
+    
+    # From Secret
+    - name: SECRET_VALUE
+      valueFrom:
+        secretKeyRef:
+          name: app-secrets
+          key: secret-key
+    
+    # Environment from ConfigMap (all keys)
+    envFrom:
+    - configMapRef:
+        name: app-config
+        optional: true                      # Don't fail if ConfigMap missing
+    - secretRef:
+        name: app-secrets
+        optional: true
+    
+    # Resource requirements and limits
+    resources:
+      requests:                            # Minimum guaranteed resources
+        memory: "128Mi"                    # Memory in Mi/Gi or bytes
+        cpu: "100m"                       # CPU in millicores (m) or cores
+        ephemeral-storage: "1Gi"          # Temporary storage
+      limits:                             # Maximum allowed resources
+        memory: "256Mi"
+        cpu: "200m" 
+        ephemeral-storage: "2Gi"
+    
+    # Volume mounts
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+    - name: data-volume
+      mountPath: /data
+    - name: cache-volume
+      mountPath: /var/cache/nginx
+    
+    # Health checks
+    # Liveness probe - restart container if fails
+    livenessProbe:
+      httpGet:                            # HTTP probe
+        path: /health
+        port: http                        # Can use named port
+        httpHeaders:
+        - name: Custom-Header
+          value: liveness-check
+      initialDelaySeconds: 30             # Wait before first check
+      periodSeconds: 10                   # Check interval
+      timeoutSeconds: 5                   # Timeout for each check
+      failureThreshold: 3                 # Failures before restart
+      successThreshold: 1                 # Successes to consider healthy
+    
+    # Readiness probe - remove from service if fails
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 80
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+    
+    # Startup probe - for slow-starting containers
+    startupProbe:
+      httpGet:
+        path: /startup
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30                # Allow 150s for startup (30 * 5s)
+      successThreshold: 1
+    
+    # Security context
+    securityContext:
+      runAsUser: 1000                     # Run as specific user ID
+      runAsGroup: 3000                    # Run as specific group ID  
+      runAsNonRoot: true                  # Ensure non-root user
+      allowPrivilegeEscalation: false     # Prevent privilege escalation
+      readOnlyRootFilesystem: false       # Read-only root filesystem
+      capabilities:                       # Linux capabilities
+        add: ["NET_ADMIN"]               # Add specific capabilities
+        drop: ["ALL"]                    # Drop all capabilities first
+    
+    # Lifecycle hooks
+    lifecycle:
+      postStart:                          # Execute after container starts
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "Container started at $(date)" >> /data/lifecycle.log
+            echo "Performing post-start initialization..."
+      preStop:                           # Execute before container stops
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "Container stopping at $(date)" >> /data/lifecycle.log
+            echo "Performing cleanup..."
+            # Graceful shutdown
+            nginx -s quit
+    
+    # Terminal and TTY
+    stdin: false                          # Allocate stdin
+    stdinOnce: false                      # Close stdin after first client disconnects
+    tty: false                           # Allocate pseudo-TTY
+  
+  # Second container demonstrating different probe types
+  - name: monitoring-sidecar
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Monitoring sidecar starting..."
+      
+      # Create health check files for demonstration
+      mkdir -p /health
+      echo "ready" > /health/ready
+      echo "alive" > /health/alive
+      
+      # Monitor main application
+      while true; do
+        echo "Monitoring check at $(date)"
+        if pgrep nginx > /dev/null; then
+          echo "Main app is running"
+          echo "healthy" > /health/status
+        else
+          echo "Main app is not running"
+          echo "unhealthy" > /health/status
+        fi
+        sleep 10
+      done
+    
+    # Different probe types for demonstration
+    livenessProbe:
+      exec:                               # Command-based probe
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "test -f /health/alive"
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    
+    readinessProbe:
+      exec:
+        command:
+        - "/bin/sh" 
+        - "-c"
+        - "grep -q healthy /health/status"
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    
+    # TCP socket probe example (commented as it won't work with busybox)
+    # livenessProbe:
+    #   tcpSocket:
+    #     port: 8080
+    #   initialDelaySeconds: 15
+    #   periodSeconds: 20
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+    - name: monitoring-config
+      mountPath: /etc/monitoring
+      readOnly: true
+  
+  # Pod-level specifications
+  restartPolicy: Always                   # Always, OnFailure, Never
+  terminationGracePeriodSeconds: 30       # Time to wait for graceful shutdown
+  activeDeadlineSeconds: 3600             # Max time pod can run (1 hour)
+  
+  # DNS configuration
+  dnsPolicy: ClusterFirst                 # Default, ClusterFirst, ClusterFirstWithHostNet, None
+  dnsConfig:                             # Custom DNS settings
+    nameservers:
+    - "8.8.8.8"
+    searches:
+    - "company.local"
+    options:
+    - name: ndots
+      value: "2"
+  
+  # Host configuration
+  hostNetwork: false                      # Use host network
+  hostPID: false                         # Share host PID namespace
+  hostIPC: false                         # Share host IPC namespace
+  
+  # Service account
+  serviceAccountName: default             # Service account for pod
+  automountServiceAccountToken: true      # Mount service account token
+  
+  # Node selection and affinity
+  nodeSelector:                          # Simple node selection
+    disktype: ssd
+    zone: us-west-2a
+  
+  # Advanced scheduling
+  affinity:
+    nodeAffinity:                        # Node affinity rules
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+            - amd64
+            - arm64
+    podAffinity:                         # Pod affinity (schedule near other pods)
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - database
+          topologyKey: kubernetes.io/hostname
+    podAntiAffinity:                     # Pod anti-affinity (avoid other pods)
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - spec-demo
+        topologyKey: kubernetes.io/hostname
+  
+  # Tolerations (for node taints)
+  tolerations:
+  - key: "special-hardware"
+    operator: "Equal"
+    value: "gpu"
+    effect: "NoSchedule"
+  - key: "maintenance"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+  
+  # Priority and preemption
+  priorityClassName: high-priority        # Priority class name
+  priority: 1000                         # Priority value (higher = more important)
+  
+  # Security context (pod-level)
+  securityContext:
+    runAsUser: 1000                      # Default user for all containers
+    runAsGroup: 3000                     # Default group for all containers
+    runAsNonRoot: true                   # All containers must run as non-root
+    fsGroup: 2000                        # Group ID for volume ownership
+    seccompProfile:                      # Seccomp profile
+      type: RuntimeDefault
+    seLinuxOptions:                      # SELinux options
+      level: "s0:c123,c456"
+  
+  # Image pull configuration
+  imagePullSecrets:                      # Secrets for private registries
+  - name: registry-secret
+  
+  # Volumes (various types)
+  volumes:
+  # ConfigMap volume
+  - name: config-volume
+    configMap:
+      name: app-config
+      items:
+      - key: nginx.conf
+        path: nginx.conf
+        mode: 0644
+  
+  # Secret volume
+  - name: secret-volume
+    secret:
+      secretName: app-secrets
+      defaultMode: 0400
+  
+  # EmptyDir volume (temporary storage)
+  - name: data-volume
+    emptyDir:
+      sizeLimit: 1Gi
+      medium: Memory                      # Use memory-backed filesystem
+  
+  # Another EmptyDir for cache
+  - name: cache-volume
+    emptyDir:
+      sizeLimit: 500Mi
+  
+  # ConfigMap for monitoring config
+  - name: monitoring-config
+    configMap:
+      name: monitoring-config
+      optional: true
+
+---
+# =============================================================================
+# Supporting Resources (ConfigMap and Secret)
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app: spec-demo
+data:
+  config-key: "config-value"
+  database-host: "postgres.example.com"
+  database-port: "5432"
+  cache-ttl: "3600"
+  log-level: "info"
+  
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /health {
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /ready {
+            return 200 "ready\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /startup {
+            return 200 "started\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  labels:
+    app: spec-demo
+type: Opaque
+data:
+  secret-key: c2VjcmV0LXZhbHVl          # "secret-value" in base64
+  database-password: bXlzZWNyZXRwYXNzd29yZA==  # "mysecretpassword" in base64
+  api-key: YWJjMTIzZGVmNDU2            # "abc123def456" in base64
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  labels:
+    app: spec-demo
+data:
+  monitor.conf: |
+    # Monitoring configuration
+    check_interval=10
+    alert_threshold=90
+    notify_email=admin@example.com
+
+---
+# =============================================================================
+# SECTION 2: Resource Management Examples
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-management-demo
+  labels:
+    app: resource-demo
+  annotations:
+    description: "Demonstrates various resource management patterns"
+spec:
+  containers:
+  # Memory-intensive container
+  - name: memory-intensive
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - "while true; do echo 'Memory intensive workload'; sleep 60; done"
+    resources:
+      requests:
+        memory: "512Mi"                   # Request 512MB
+        cpu: "100m"                      # Request 0.1 CPU core
+      limits:
+        memory: "1Gi"                    # Limit to 1GB
+        cpu: "500m"                      # Limit to 0.5 CPU core
+        ephemeral-storage: "2Gi"         # Limit temporary storage
+  
+  # CPU-intensive container  
+  - name: cpu-intensive
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - "while true; do echo 'CPU intensive workload'; done"
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "500m"                      # Request 0.5 CPU core
+      limits:
+        memory: "128Mi"
+        cpu: "1000m"                     # Limit to 1 CPU core (1000m = 1 core)
+  
+  # Burstable container (requests < limits)
+  - name: burstable
+    image: busybox:1.35
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"                  # Can burst up to 256MB
+        cpu: "200m"                      # Can burst up to 0.2 CPU core
+  
+  # Guaranteed container (requests = limits)
+  - name: guaranteed
+    image: busybox:1.35
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"                  # Same as requests = Guaranteed QoS
+        cpu: "100m"                      # Same as requests = Guaranteed QoS
+
+---
+# =============================================================================
+# SECTION 3: Advanced Security Context Examples
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-demo
+  labels:
+    app: security-demo
+  annotations:
+    description: "Demonstrates comprehensive security context configurations"
+spec:
+  # Pod-level security context
+  securityContext:
+    runAsUser: 1000                      # All containers run as UID 1000
+    runAsGroup: 3000                     # All containers run as GID 3000
+    runAsNonRoot: true                   # Ensure non-root execution
+    fsGroup: 2000                        # Volume ownership group
+    fsGroupChangePolicy: Always          # Always change ownership
+    seccompProfile:
+      type: RuntimeDefault               # Use default seccomp profile
+    seLinuxOptions:
+      level: "s0:c123,c456"             # SELinux level
+    supplementalGroups: [1000, 2000]     # Additional groups
+    sysctls:                            # System controls
+    - name: net.core.somaxconn
+      value: "1024"
+  
+  containers:
+  - name: secure-container
+    image: nginx:1.21
+    
+    # Container-level security context (overrides pod-level)
+    securityContext:
+      allowPrivilegeEscalation: false    # Prevent privilege escalation
+      readOnlyRootFilesystem: true       # Read-only root filesystem
+      capabilities:
+        drop:                           # Drop all capabilities
+        - ALL
+        add:                            # Add only required capabilities
+        - NET_BIND_SERVICE              # Bind to privileged ports
+      seccompProfile:
+        type: Localhost                 # Use custom seccomp profile
+        localhostProfile: nginx-profile.json
+    
+    # Required writable directories when using read-only root
+    volumeMounts:
+    - name: tmp-volume
+      mountPath: /tmp
+    - name: var-cache-nginx
+      mountPath: /var/cache/nginx
+    - name: var-run
+      mountPath: /var/run
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  
+  volumes:
+  # Temporary directories for read-only root filesystem
+  - name: tmp-volume
+    emptyDir: {}
+  - name: var-cache-nginx
+    emptyDir: {}
+  - name: var-run
+    emptyDir: {}
+
+---
+# =============================================================================
+# SECTION 4: Advanced Scheduling Examples
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: advanced-scheduling-demo
+  labels:
+    app: scheduling-demo
+  annotations:
+    description: "Demonstrates advanced pod scheduling configurations"
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Node selection
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    node-type: compute-optimized
+  
+  # Advanced node affinity
+  affinity:
+    nodeAffinity:
+      # Hard requirement
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/os
+            operator: In
+            values: ["linux"]
+          - key: node.kubernetes.io/instance-type
+            operator: NotIn
+            values: ["t2.nano", "t2.micro"]
+      
+      # Soft preference
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values: ["us-west-2a", "us-west-2b"]
+      - weight: 50
+        preference:
+          matchExpressions:
+          - key: node.kubernetes.io/instance-type
+            operator: In
+            values: ["m5.large", "m5.xlarge"]
+    
+    # Pod affinity (schedule near other pods)
+    podAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values: ["database", "cache"]
+          topologyKey: kubernetes.io/hostname
+    
+    # Pod anti-affinity (avoid other pods)
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: scheduling-demo
+        topologyKey: kubernetes.io/hostname
+  
+  # Tolerations for tainted nodes
+  tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "app-servers"
+    effect: "NoSchedule"
+  - key: "experimental"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 3600
+  - key: "gpu"
+    operator: "Equal"
+    value: "nvidia"
+    effect: "NoSchedule"
+  
+  # Priority and preemption
+  priorityClassName: high-priority
+  
+  # Topology spread constraints
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: scheduling-demo

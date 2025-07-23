@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-container-demo
+  labels:
+    app: multi-container-demo
+    tier: learning
+    pattern: shared-resources
+  annotations:
+    description: "Demonstrates shared networking and storage between containers"
+    learning.kubernetes.io/exercise: "pod-anatomy"
+spec:
+  containers:
+  # Main application container
+  - name: main-app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+      name: http
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared-data
+    - name: app-logs
+      mountPath: /var/log/nginx
+    env:
+    - name: CONTAINER_ROLE
+      value: "main-application"
+    - name: SHARED_DIR
+      value: "/shared-data"
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  
+  # Sidecar container that processes logs and shares data
+  - name: sidecar
+    image: busybox:1.35
+    command: 
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Sidecar container starting..."
+      echo "Current time: $(date)" > /shared-data/sidecar-info.txt
+      echo "Sidecar PID: $$" >> /shared-data/sidecar-info.txt
+      
+      # Monitor the main app's logs
+      while true; do
+        if [ -f /app-logs/access.log ]; then
+          echo "Processing nginx access logs..."
+          tail -f /app-logs/access.log | while read line; do
+            echo "LOG: $line" >> /shared-data/processed-logs.txt
+          done
+        else
+          echo "Waiting for nginx logs..."
+          sleep 5
+        fi
+      done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared-data
+    - name: app-logs
+      mountPath: /app-logs
+    env:
+    - name: CONTAINER_ROLE
+      value: "log-processor"
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Utility container for network testing
+  - name: network-utils
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "3600"]
+    env:
+    - name: CONTAINER_ROLE
+      value: "network-utilities"
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  volumes:
+  # Shared volume between containers
+  - name: shared-data
+    emptyDir: {}
+  # Nginx log volume
+  - name: app-logs
+    emptyDir: {}
+  
+  restartPolicy: Always
+
+---
+# Service to test networking
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-container-service
+  labels:
+    app: multi-container-demo
+spec:
+  selector:
+    app: multi-container-demo
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP

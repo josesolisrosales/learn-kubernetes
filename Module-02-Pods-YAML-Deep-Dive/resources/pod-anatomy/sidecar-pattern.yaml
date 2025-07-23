@@ -1,0 +1,346 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sidecar-demo
+  labels:
+    app: sidecar-demo
+    tier: learning
+    pattern: sidecar
+  annotations:
+    description: "Demonstrates sidecar pattern for log processing and monitoring"
+    learning.kubernetes.io/exercise: "sidecar-pattern"
+spec:
+  containers:
+  
+  # Main application container
+  - name: web-app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+      name: http
+    
+    volumeMounts:
+    - name: app-logs
+      mountPath: /var/log/nginx
+    - name: shared-data
+      mountPath: /shared
+    
+    # Custom nginx config for better logging
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d
+    
+    env:
+    - name: NGINX_ENTRYPOINT_QUIET_LOGS
+      value: "1"
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    # Health checks
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+  
+  # Sidecar container: Log collector and processor
+  - name: log-collector
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Log collector sidecar starting..."
+      
+      # Create processing directories
+      mkdir -p /processed-logs
+      
+      # Function to process access logs
+      process_access_logs() {
+        if [ -f /var/log/nginx/access.log ]; then
+          echo "Processing access logs..."
+          tail -f /var/log/nginx/access.log | while IFS= read -r line; do
+            # Extract IP, method, path, status
+            timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "[$timestamp] ACCESS: $line" >> /processed-logs/access-processed.log
+            
+            # Count requests per minute (simple example)
+            echo "1" >> /shared/request-count.tmp
+          done &
+        fi
+      }
+      
+      # Function to process error logs
+      process_error_logs() {
+        if [ -f /var/log/nginx/error.log ]; then
+          echo "Processing error logs..."
+          tail -f /var/log/nginx/error.log | while IFS= read -r line; do
+            timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "[$timestamp] ERROR: $line" >> /processed-logs/error-processed.log
+            
+            # Alert on errors (simple example)
+            echo "ALERT: Error detected at $timestamp" >> /shared/alerts.log
+          done &
+        fi
+      }
+      
+      # Start log processing
+      process_access_logs
+      process_error_logs
+      
+      # Generate periodic reports
+      while true; do
+        sleep 60
+        
+        # Generate request count report
+        if [ -f /shared/request-count.tmp ]; then
+          count=$(wc -l < /shared/request-count.tmp)
+          echo "$(date): Processed $count requests in last minute" >> /shared/metrics.log
+          > /shared/request-count.tmp  # Reset counter
+        fi
+        
+        # Generate log summary
+        access_lines=$(wc -l < /processed-logs/access-processed.log 2>/dev/null || echo 0)
+        error_lines=$(wc -l < /processed-logs/error-processed.log 2>/dev/null || echo 0)
+        echo "$(date): Summary - Access logs: $access_lines, Error logs: $error_lines" >> /shared/summary.log
+      done
+    
+    volumeMounts:
+    - name: app-logs
+      mountPath: /var/log/nginx
+      readOnly: true
+    - name: processed-logs
+      mountPath: /processed-logs
+    - name: shared-data
+      mountPath: /shared
+    
+    env:
+    - name: SIDECAR_ROLE
+      value: "log-collector"
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Sidecar container: Metrics exporter
+  - name: metrics-exporter
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Metrics exporter sidecar starting..."
+      
+      # Simple HTTP server for metrics (using netcat)
+      while true; do
+        # Generate metrics in Prometheus format
+        cat > /tmp/metrics.txt << EOF
+      # HELP nginx_requests_total Total number of requests processed
+      # TYPE nginx_requests_total counter
+      nginx_requests_total $(wc -l < /shared/request-count.tmp 2>/dev/null || echo 0)
+      
+      # HELP nginx_errors_total Total number of errors
+      # TYPE nginx_errors_total counter  
+      nginx_errors_total $(wc -l < /processed-logs/error-processed.log 2>/dev/null || echo 0)
+      
+      # HELP nginx_up Application health status
+      # TYPE nginx_up gauge
+      nginx_up 1
+      EOF
+        
+        # Serve metrics on port 9090 (simplified)
+        echo "Metrics updated at $(date)"
+        echo "Current metrics:"
+        cat /tmp/metrics.txt
+        
+        sleep 30
+      done
+    
+    ports:
+    - containerPort: 9090
+      name: metrics
+    
+    volumeMounts:
+    - name: processed-logs
+      mountPath: /processed-logs
+      readOnly: true
+    - name: shared-data
+      mountPath: /shared
+      readOnly: true
+    
+    env:
+    - name: SIDECAR_ROLE
+      value: "metrics-exporter"
+    - name: METRICS_PORT
+      value: "9090"
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Sidecar container: Health monitor
+  - name: health-monitor
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Health monitor sidecar starting..."
+      
+      while true; do
+        # Check if main app is responding
+        if wget -q --spider http://localhost/health 2>/dev/null; then
+          echo "$(date): Main app is healthy" >> /shared/health-status.log
+          health_status="UP"
+        else
+          echo "$(date): Main app is not responding!" >> /shared/health-status.log
+          health_status="DOWN"
+        fi
+        
+        # Log resource usage (simplified)
+        echo "$(date): Health=$health_status, Memory=$(cat /proc/meminfo | grep MemAvailable)" >> /shared/health-detailed.log
+        
+        # Check log processing status
+        if [ -f /processed-logs/access-processed.log ]; then
+          log_lines=$(wc -l < /processed-logs/access-processed.log)
+          echo "$(date): Log processor active, processed $log_lines lines" >> /shared/health-status.log
+        fi
+        
+        sleep 30
+      done
+    
+    volumeMounts:
+    - name: processed-logs
+      mountPath: /processed-logs
+      readOnly: true
+    - name: shared-data
+      mountPath: /shared
+    
+    env:
+    - name: SIDECAR_ROLE
+      value: "health-monitor"
+    - name: CHECK_INTERVAL
+      value: "30"
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  volumes:
+  # Shared log volume between main app and log collector
+  - name: app-logs
+    emptyDir: {}
+  
+  # Volume for processed logs (log collector writes, others read)
+  - name: processed-logs
+    emptyDir: {}
+  
+  # Shared data volume for communication between sidecars
+  - name: shared-data
+    emptyDir: {}
+  
+  # Custom nginx configuration
+  - name: nginx-config
+    configMap:
+      name: sidecar-nginx-config
+  
+  restartPolicy: Always
+
+---
+# ConfigMap for custom nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sidecar-nginx-config
+  labels:
+    app: sidecar-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Enhanced logging format
+        log_format detailed '$remote_addr - $remote_user [$time_local] "$request" '
+                           '$status $body_bytes_sent "$http_referer" '
+                           '"$http_user_agent" $request_time';
+        
+        access_log /var/log/nginx/access.log detailed;
+        error_log /var/log/nginx/error.log warn;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Metrics endpoint (proxy to sidecar)
+        location /metrics {
+            access_log off;
+            return 200 "# Metrics served by sidecar on port 9090\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Generate some test traffic
+        location /test {
+            return 200 "Test endpoint - timestamp: $time_iso8601\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Simulate error for testing
+        location /error {
+            return 500 "Simulated error for testing\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# Service to expose the sidecar demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: sidecar-demo-service
+  labels:
+    app: sidecar-demo
+spec:
+  selector:
+    app: sidecar-demo
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP

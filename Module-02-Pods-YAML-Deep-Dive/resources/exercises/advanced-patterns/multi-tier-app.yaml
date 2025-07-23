@@ -1,0 +1,1507 @@
+# Multi-Tier Application - Complete 3-Tier Architecture Implementation
+# Demonstrates a complete application using multiple container patterns
+
+# =============================================================================
+# SECTION 1: Data Tier - Database with Backup and Monitoring
+# =============================================================================
+
+# Database StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-tier
+  labels:
+    app: multi-tier-app
+    tier: data
+    component: database
+  annotations:
+    description: "Data tier with PostgreSQL, backup sidecar, and monitoring"
+spec:
+  serviceName: database-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: data
+  
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: data
+        component: database
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+    
+    spec:
+      # Init container for database initialization
+      initContainers:
+      - name: db-init
+        image: postgres:13
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          echo "Database initialization starting..."
+          
+          # Wait for PostgreSQL to accept connections
+          until pg_isready -h localhost -p 5432; do
+            echo "Waiting for PostgreSQL to start..."
+            sleep 2
+          done
+          
+          echo "Creating application database and schema..."
+          
+          # Initialize database schema
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -p 5432 -U postgres -d multitier_db <<EOF
+          
+          -- Users table
+          CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) UNIQUE NOT NULL,
+            email VARCHAR(100) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          
+          -- Products table
+          CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            price DECIMAL(10,2) NOT NULL,
+            stock_quantity INTEGER DEFAULT 0,
+            category VARCHAR(50),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          
+          -- Orders table
+          CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            total_amount DECIMAL(10,2) NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          
+          -- Order items table
+          CREATE TABLE IF NOT EXISTS order_items (
+            id SERIAL PRIMARY KEY,
+            order_id INTEGER REFERENCES orders(id),
+            product_id INTEGER REFERENCES products(id),
+            quantity INTEGER NOT NULL,
+            price DECIMAL(10,2) NOT NULL
+          );
+          
+          -- Insert sample data
+          INSERT INTO users (username, email, password_hash) VALUES
+            ('admin', 'admin@example.com', 'hashed_password_1'),
+            ('john_doe', 'john@example.com', 'hashed_password_2'),
+            ('jane_smith', 'jane@example.com', 'hashed_password_3')
+          ON CONFLICT (username) DO NOTHING;
+          
+          INSERT INTO products (name, description, price, stock_quantity, category) VALUES
+            ('Laptop', 'High-performance laptop', 999.99, 50, 'Electronics'),
+            ('Mouse', 'Wireless optical mouse', 29.99, 200, 'Electronics'),
+            ('Keyboard', 'Mechanical keyboard', 79.99, 150, 'Electronics'),
+            ('Monitor', '24-inch LED monitor', 199.99, 75, 'Electronics')
+          ON CONFLICT DO NOTHING;
+          
+          INSERT INTO orders (user_id, total_amount, status) VALUES
+            (2, 1029.98, 'completed'),
+            (3, 109.98, 'pending')
+          ON CONFLICT DO NOTHING;
+          
+          INSERT INTO order_items (order_id, product_id, quantity, price) VALUES
+            (1, 1, 1, 999.99),
+            (1, 2, 1, 29.99),
+            (2, 3, 1, 79.99),
+            (2, 2, 1, 29.99)
+          ON CONFLICT DO NOTHING;
+          
+          EOF
+          
+          echo "Database initialization completed!"
+        
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      
+      containers:
+      # Main PostgreSQL container
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+          name: postgres
+        
+        env:
+        - name: POSTGRES_DB
+          value: "multitier_db"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+        
+        readinessProbe:
+          exec:
+            command:
+            - "pg_isready"
+            - "-U"
+            - "postgres"
+            - "-d"
+            - "multitier_db"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        livenessProbe:
+          exec:
+            command:
+            - "pg_isready"
+            - "-U"
+            - "postgres"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      
+      # Database backup sidecar
+      - name: db-backup
+        image: postgres:13
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          echo "Database backup sidecar starting..."
+          
+          while true; do
+            echo "=== Database Backup Process $(date) ==="
+            
+            # Wait for main database to be ready
+            until pg_isready -h localhost -p 5432 -U postgres; do
+              echo "Waiting for database to be ready..."
+              sleep 10
+            done
+            
+            # Create backup directory with timestamp
+            backup_dir="/backups/$(date +%Y%m%d_%H%M%S)"
+            mkdir -p "$backup_dir"
+            
+            echo "Creating database backup..."
+            PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
+              -h localhost -p 5432 -U postgres -d multitier_db \
+              -f "$backup_dir/multitier_db_backup.sql"
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Backup completed successfully: $backup_dir/multitier_db_backup.sql"
+              
+              # Compress backup
+              gzip "$backup_dir/multitier_db_backup.sql"
+              echo "✅ Backup compressed"
+              
+              # Create backup metadata
+              cat > "$backup_dir/backup_info.txt" <<EOF
+Backup Date: $(date)
+Database: multitier_db
+Size: $(du -h "$backup_dir/multitier_db_backup.sql.gz" | cut -f1)
+Status: Success
+Tables: $(PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -p 5432 -U postgres -d multitier_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
+EOF
+              
+            else
+              echo "❌ Backup failed!"
+            fi
+            
+            # Cleanup old backups (keep last 5)
+            cd /backups
+            ls -t | tail -n +6 | xargs -r rm -rf
+            echo "Old backups cleaned up"
+            
+            # Wait 4 hours before next backup
+            echo "Next backup in 4 hours..."
+            sleep 14400  # 4 hours
+          done
+        
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+          readOnly: true
+        - name: backup-storage
+          mountPath: /backups
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      
+      # Database monitoring sidecar (PostgreSQL Exporter)
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter
+        ports:
+        - containerPort: 9187
+          name: metrics
+        
+        env:
+        - name: DATA_SOURCE_NAME
+          value: "postgresql://postgres:$(POSTGRES_PASSWORD)@localhost:5432/multitier_db?sslmode=disable"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9187
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      
+      volumes:
+      - name: postgres-config
+        configMap:
+          name: postgres-config
+      - name: backup-storage
+        emptyDir: {}
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
+
+---
+# Database service
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  labels:
+    app: multi-tier-app
+    tier: data
+spec:
+  selector:
+    app: multi-tier-app
+    tier: data
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  - port: 9187
+    targetPort: 9187
+    name: metrics
+  clusterIP: None  # Headless service for StatefulSet
+
+---
+# Database configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  labels:
+    app: multi-tier-app
+    tier: data
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'all'
+    log_min_duration_statement = 1000
+
+---
+# Database secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-secret
+  labels:
+    app: multi-tier-app
+    tier: data
+type: Opaque
+data:
+  postgres-password: cG9zdGdyZXNfcGFzcw==  # postgres_pass (base64)
+
+---
+# =============================================================================
+# SECTION 2: Business Logic Tier - API Server with Sidecars
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: business-tier
+  labels:
+    app: multi-tier-app
+    tier: business
+    component: api-server
+  annotations:
+    description: "Business logic tier with API server, logging, and monitoring"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: business
+  
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: business
+        component: api-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    
+    spec:
+      # Init container - wait for database
+      initContainers:
+      - name: wait-for-database
+        image: postgres:13
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          echo "Waiting for database to be ready..."
+          until pg_isready -h database-service -p 5432 -U postgres; do
+            echo "Database not ready, waiting..."
+            sleep 5
+          done
+          echo "Database is ready!"
+        
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+      
+      containers:
+      # Main API server container
+      - name: api-server
+        image: node:16-alpine
+        ports:
+        - containerPort: 3000
+          name: http
+        - containerPort: 9090
+          name: metrics
+        
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "API Server starting..."
+          
+          # Install required packages
+          npm init -y
+          npm install express pg prometheus-client
+          
+          # Create API server
+          cat > /app/server.js <<'EOF'
+          const express = require('express');
+          const { Pool } = require('pg');
+          const client = require('prom-client');
+          
+          const app = express();
+          app.use(express.json());
+          
+          // Prometheus metrics
+          const register = new client.Registry();
+          client.collectDefaultMetrics({ register });
+          
+          const httpRequests = new client.Counter({
+            name: 'http_requests_total',
+            help: 'Total number of HTTP requests',
+            labelNames: ['method', 'route', 'status'],
+            registers: [register]
+          });
+          
+          const dbConnections = new client.Gauge({
+            name: 'database_connections_active',
+            help: 'Active database connections',
+            registers: [register]
+          });
+          
+          // Database connection
+          const pool = new Pool({
+            host: 'database-service',
+            port: 5432,
+            database: 'multitier_db',
+            user: 'postgres',
+            password: process.env.DB_PASSWORD,
+            max: 20,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 2000,
+          });
+          
+          // Middleware
+          app.use((req, res, next) => {
+            const start = Date.now();
+            res.on('finish', () => {
+              const duration = Date.now() - start;
+              httpRequests.inc({ 
+                method: req.method, 
+                route: req.route?.path || req.path, 
+                status: res.statusCode 
+              });
+              console.log(\`\${req.method} \${req.url} - \${res.statusCode} (\${duration}ms)\`);
+            });
+            next();
+          });
+          
+          // Health check
+          app.get('/health', (req, res) => {
+            res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+          });
+          
+          // Metrics endpoint
+          app.get('/metrics', async (req, res) => {
+            res.set('Content-Type', register.contentType);
+            res.end(await register.metrics());
+          });
+          
+          // Users API
+          app.get('/api/users', async (req, res) => {
+            try {
+              const result = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY created_at DESC');
+              res.json(result.rows);
+            } catch (error) {
+              console.error('Error fetching users:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          app.get('/api/users/:id', async (req, res) => {
+            try {
+              const { id } = req.params;
+              const result = await pool.query('SELECT id, username, email, created_at FROM users WHERE id = $1', [id]);
+              if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'User not found' });
+              }
+              res.json(result.rows[0]);
+            } catch (error) {
+              console.error('Error fetching user:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          // Products API
+          app.get('/api/products', async (req, res) => {
+            try {
+              const result = await pool.query('SELECT * FROM products ORDER BY name');
+              res.json(result.rows);
+            } catch (error) {
+              console.error('Error fetching products:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          app.get('/api/products/:id', async (req, res) => {
+            try {
+              const { id } = req.params;
+              const result = await pool.query('SELECT * FROM products WHERE id = $1', [id]);
+              if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Product not found' });
+              }
+              res.json(result.rows[0]);
+            } catch (error) {
+              console.error('Error fetching product:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          // Orders API
+          app.get('/api/orders', async (req, res) => {
+            try {
+              const result = await pool.query(\`
+                SELECT o.*, u.username 
+                FROM orders o 
+                JOIN users u ON o.user_id = u.id 
+                ORDER BY o.created_at DESC
+              \`);
+              res.json(result.rows);
+            } catch (error) {
+              console.error('Error fetching orders:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          app.post('/api/orders', async (req, res) => {
+            try {
+              const { user_id, items } = req.body;
+              
+              // Start transaction
+              const client = await pool.connect();
+              try {
+                await client.query('BEGIN');
+                
+                // Calculate total
+                let total = 0;
+                for (const item of items) {
+                  const productResult = await client.query('SELECT price FROM products WHERE id = $1', [item.product_id]);
+                  if (productResult.rows.length > 0) {
+                    total += productResult.rows[0].price * item.quantity;
+                  }
+                }
+                
+                // Create order
+                const orderResult = await client.query(
+                  'INSERT INTO orders (user_id, total_amount, status) VALUES ($1, $2, $3) RETURNING id',
+                  [user_id, total, 'pending']
+                );
+                const orderId = orderResult.rows[0].id;
+                
+                // Add order items
+                for (const item of items) {
+                  const productResult = await client.query('SELECT price FROM products WHERE id = $1', [item.product_id]);
+                  if (productResult.rows.length > 0) {
+                    await client.query(
+                      'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)',
+                      [orderId, item.product_id, item.quantity, productResult.rows[0].price]
+                    );
+                  }
+                }
+                
+                await client.query('COMMIT');
+                res.status(201).json({ order_id: orderId, total_amount: total });
+              } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+              } finally {
+                client.release();
+              }
+            } catch (error) {
+              console.error('Error creating order:', error);
+              res.status(500).json({ error: 'Internal server error' });
+            }
+          });
+          
+          // Update database connection gauge periodically
+          setInterval(() => {
+            dbConnections.set(pool.totalCount);
+          }, 5000);
+          
+          const PORT = process.env.PORT || 3000;
+          app.listen(PORT, () => {
+            console.log(\`API Server listening on port \${PORT}\`);
+          });
+          EOF
+          
+          # Start the server
+          node /app/server.js
+        
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-password
+        - name: PORT
+          value: "3000"
+        - name: NODE_ENV
+          value: "production"
+        
+        volumeMounts:
+        - name: app-logs
+          mountPath: /app/logs
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        # Graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - "sleep 10"  # Allow time for connections to drain
+      
+      # Log processing sidecar
+      - name: log-processor
+        image: busybox:1.35
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "Log processor sidecar starting..."
+          
+          while true; do
+            # Process application logs
+            if [ -f /app/logs/app.log ]; then
+              echo "=== Processing application logs $(date) ==="
+              
+              # Count log levels
+              error_count=$(grep -c "ERROR" /app/logs/app.log 2>/dev/null || echo 0)
+              warn_count=$(grep -c "WARN" /app/logs/app.log 2>/dev/null || echo 0)
+              info_count=$(grep -c "INFO" /app/logs/app.log 2>/dev/null || echo 0)
+              
+              echo "Log summary: ERROR=$error_count, WARN=$warn_count, INFO=$info_count"
+              
+              # Create metrics
+              cat > /shared/log-metrics.txt <<EOF
+log_errors_total $error_count
+log_warnings_total $warn_count
+log_info_total $info_count
+log_last_processed $(date +%s)
+EOF
+              
+              # Rotate logs if too large
+              if [ $(wc -l < /app/logs/app.log) -gt 1000 ]; then
+                echo "Rotating large log file..."
+                tail -n 500 /app/logs/app.log > /app/logs/app.log.tmp
+                mv /app/logs/app.log.tmp /app/logs/app.log
+              fi
+            fi
+            
+            sleep 60
+          done
+        
+        volumeMounts:
+        - name: app-logs
+          mountPath: /app/logs
+        - name: shared-data
+          mountPath: /shared
+        
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "25m"
+      
+      # Circuit breaker and load balancer sidecar
+      - name: circuit-breaker
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 8080
+          name: proxy
+        
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health-proxy
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      volumes:
+      - name: app-logs
+        emptyDir: {}
+      - name: shared-data
+        emptyDir: {}
+      - name: nginx-config
+        configMap:
+          name: business-tier-nginx-config
+
+---
+# Business tier service
+apiVersion: v1
+kind: Service
+metadata:
+  name: business-service
+  labels:
+    app: multi-tier-app
+    tier: business
+spec:
+  selector:
+    app: multi-tier-app
+    tier: business
+  ports:
+  - port: 80
+    targetPort: 3000
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  - port: 8080
+    targetPort: 8080
+    name: proxy
+  type: ClusterIP
+
+---
+# Nginx configuration for circuit breaker
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: business-tier-nginx-config
+  labels:
+    app: multi-tier-app
+    tier: business
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        upstream api_backend {
+            server localhost:3000 max_fails=3 fail_timeout=30s;
+            keepalive 32;
+        }
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api_rate_limit:10m rate=100r/s;
+        
+        server {
+            listen 8080;
+            server_name localhost;
+            
+            # Health check for proxy
+            location /health-proxy {
+                access_log off;
+                return 200 "Circuit breaker healthy\n";
+            }
+            
+            # Proxy to API server with circuit breaker logic
+            location / {
+                limit_req zone=api_rate_limit burst=200 nodelay;
+                
+                proxy_pass http://api_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                
+                # Circuit breaker timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 10s;
+                proxy_read_timeout 10s;
+                
+                # Retry logic
+                proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+                proxy_next_upstream_tries 3;
+                proxy_next_upstream_timeout 10s;
+            }
+        }
+    }
+
+---
+# =============================================================================
+# SECTION 3: Presentation Tier - Frontend with CDN and Load Balancer
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presentation-tier
+  labels:
+    app: multi-tier-app
+    tier: presentation
+    component: frontend
+  annotations:
+    description: "Presentation tier with React frontend, CDN, and load balancer"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: presentation
+  
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: presentation
+        component: frontend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+    
+    spec:
+      # Init container - build frontend assets
+      initContainers:
+      - name: asset-builder
+        image: node:16-alpine
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "Building frontend assets..."
+          
+          mkdir -p /build
+          cd /build
+          
+          # Create a simple React-like SPA
+          cat > /build/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Multi-Tier Application</title>
+              <style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { 
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      min-height: 100vh;
+                      color: white;
+                  }
+                  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+                  .header { text-align: center; margin-bottom: 40px; }
+                  .nav { display: flex; justify-content: center; gap: 20px; margin-bottom: 40px; }
+                  .nav button { 
+                      padding: 10px 20px; 
+                      border: none; 
+                      border-radius: 5px; 
+                      background: rgba(255,255,255,0.2);
+                      color: white;
+                      cursor: pointer;
+                      transition: background 0.3s;
+                  }
+                  .nav button:hover { background: rgba(255,255,255,0.3); }
+                  .nav button.active { background: rgba(255,255,255,0.4); }
+                  .content { 
+                      background: rgba(255,255,255,0.1); 
+                      border-radius: 10px; 
+                      padding: 30px; 
+                      margin-bottom: 20px;
+                  }
+                  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+                  .card { 
+                      background: rgba(255,255,255,0.1); 
+                      border-radius: 8px; 
+                      padding: 20px; 
+                      border: 1px solid rgba(255,255,255,0.2);
+                  }
+                  .loading { text-align: center; padding: 40px; }
+                  .error { color: #ff6b6b; background: rgba(255,107,107,0.1); padding: 10px; border-radius: 5px; }
+                  .metrics { font-size: 0.9em; opacity: 0.8; margin-top: 20px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h1>🏢 Multi-Tier Application</h1>
+                      <p>Demonstrating 3-tier architecture with Kubernetes</p>
+                  </div>
+                  
+                  <div class="nav">
+                      <button onclick="loadUsers()" id="users-btn" class="active">Users</button>
+                      <button onclick="loadProducts()" id="products-btn">Products</button>
+                      <button onclick="loadOrders()" id="orders-btn">Orders</button>
+                      <button onclick="loadMetrics()" id="metrics-btn">Metrics</button>
+                  </div>
+                  
+                  <div id="content" class="content">
+                      <div class="loading">Loading...</div>
+                  </div>
+                  
+                  <div class="metrics">
+                      <div><strong>Frontend:</strong> <span id="frontend-status">🟢 Active</span></div>
+                      <div><strong>API Server:</strong> <span id="api-status">Checking...</span></div>
+                      <div><strong>Database:</strong> <span id="db-status">Checking...</span></div>
+                      <div><strong>Last Updated:</strong> <span id="last-updated">--</span></div>
+                  </div>
+              </div>
+              
+              <script>
+                  const API_BASE = '/api';
+                  let currentSection = 'users';
+                  
+                  // Navigation
+                  function setActive(buttonId) {
+                      document.querySelectorAll('.nav button').forEach(btn => btn.classList.remove('active'));
+                      document.getElementById(buttonId).classList.add('active');
+                  }
+                  
+                  // API calls
+                  async function apiCall(endpoint) {
+                      try {
+                          const response = await fetch(API_BASE + endpoint);
+                          if (!response.ok) throw new Error(\`HTTP \${response.status}\`);
+                          return await response.json();
+                      } catch (error) {
+                          console.error('API call failed:', error);
+                          throw error;
+                      }
+                  }
+                  
+                  // Load users
+                  async function loadUsers() {
+                      setActive('users-btn');
+                      currentSection = 'users';
+                      const content = document.getElementById('content');
+                      content.innerHTML = '<div class="loading">Loading users...</div>';
+                      
+                      try {
+                          const users = await apiCall('/users');
+                          content.innerHTML = \`
+                              <h2>👥 Users (\${users.length})</h2>
+                              <div class="grid">
+                                  \${users.map(user => \`
+                                      <div class="card">
+                                          <h3>\${user.username}</h3>
+                                          <p><strong>Email:</strong> \${user.email}</p>
+                                          <p><strong>ID:</strong> \${user.id}</p>
+                                          <p><strong>Created:</strong> \${new Date(user.created_at).toLocaleDateString()}</p>
+                                      </div>
+                                  \`).join('')}
+                              </div>
+                          \`;
+                      } catch (error) {
+                          content.innerHTML = \`<div class="error">Failed to load users: \${error.message}</div>\`;
+                      }
+                  }
+                  
+                  // Load products
+                  async function loadProducts() {
+                      setActive('products-btn');
+                      currentSection = 'products';
+                      const content = document.getElementById('content');
+                      content.innerHTML = '<div class="loading">Loading products...</div>';
+                      
+                      try {
+                          const products = await apiCall('/products');
+                          content.innerHTML = \`
+                              <h2>📦 Products (\${products.length})</h2>
+                              <div class="grid">
+                                  \${products.map(product => \`
+                                      <div class="card">
+                                          <h3>\${product.name}</h3>
+                                          <p>\${product.description}</p>
+                                          <p><strong>Price:</strong> $\${product.price}</p>
+                                          <p><strong>Stock:</strong> \${product.stock_quantity}</p>
+                                          <p><strong>Category:</strong> \${product.category}</p>
+                                      </div>
+                                  \`).join('')}
+                              </div>
+                          \`;
+                      } catch (error) {
+                          content.innerHTML = \`<div class="error">Failed to load products: \${error.message}</div>\`;
+                      }
+                  }
+                  
+                  // Load orders
+                  async function loadOrders() {
+                      setActive('orders-btn');
+                      currentSection = 'orders';
+                      const content = document.getElementById('content');
+                      content.innerHTML = '<div class="loading">Loading orders...</div>';
+                      
+                      try {
+                          const orders = await apiCall('/orders');
+                          content.innerHTML = \`
+                              <h2>🛒 Orders (\${orders.length})</h2>
+                              <div class="grid">
+                                  \${orders.map(order => \`
+                                      <div class="card">
+                                          <h3>Order #\${order.id}</h3>
+                                          <p><strong>Customer:</strong> \${order.username}</p>
+                                          <p><strong>Total:</strong> $\${order.total_amount}</p>
+                                          <p><strong>Status:</strong> \${order.status}</p>
+                                          <p><strong>Date:</strong> \${new Date(order.created_at).toLocaleDateString()}</p>
+                                      </div>
+                                  \`).join('')}
+                              </div>
+                          \`;
+                      } catch (error) {
+                          content.innerHTML = \`<div class="error">Failed to load orders: \${error.message}</div>\`;
+                      }
+                  }
+                  
+                  // Load metrics
+                  async function loadMetrics() {
+                      setActive('metrics-btn');
+                      currentSection = 'metrics';
+                      const content = document.getElementById('content');
+                      content.innerHTML = '<div class="loading">Loading metrics...</div>';
+                      
+                      try {
+                          const healthResponse = await fetch('/api/health');
+                          const health = await healthResponse.json();
+                          
+                          content.innerHTML = \`
+                              <h2>📊 System Metrics</h2>
+                              <div class="grid">
+                                  <div class="card">
+                                      <h3>API Health</h3>
+                                      <p><strong>Status:</strong> \${health.status}</p>
+                                      <p><strong>Timestamp:</strong> \${health.timestamp}</p>
+                                  </div>
+                                  <div class="card">
+                                      <h3>Frontend Metrics</h3>
+                                      <p><strong>Current Section:</strong> \${currentSection}</p>
+                                      <p><strong>Load Time:</strong> \${Date.now() - performance.timing.navigationStart}ms</p>
+                                      <p><strong>User Agent:</strong> \${navigator.userAgent.split(' ')[0]}</p>
+                                  </div>
+                                  <div class="card">
+                                      <h3>System Architecture</h3>
+                                      <p><strong>Tier:</strong> Presentation</p>
+                                      <p><strong>Container:</strong> nginx + SPA</p>
+                                      <p><strong>Backend:</strong> Node.js API</p>
+                                      <p><strong>Database:</strong> PostgreSQL</p>
+                                  </div>
+                              </div>
+                          \`;
+                      } catch (error) {
+                          content.innerHTML = \`<div class="error">Failed to load metrics: \${error.message}</div>\`;
+                      }
+                  }
+                  
+                  // Check system status
+                  async function checkStatus() {
+                      try {
+                          const response = await fetch('/api/health');
+                          document.getElementById('api-status').innerHTML = response.ok ? '🟢 Healthy' : '🔴 Error';
+                          document.getElementById('db-status').innerHTML = '🟢 Connected';
+                      } catch (error) {
+                          document.getElementById('api-status').innerHTML = '🔴 Offline';
+                          document.getElementById('db-status').innerHTML = '🔴 Unknown';
+                      }
+                      document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+                  }
+                  
+                  // Initialize
+                  loadUsers();
+                  checkStatus();
+                  setInterval(checkStatus, 30000);
+              </script>
+          </body>
+          </html>
+          EOF
+          
+          echo "Frontend assets built successfully!"
+          cp /build/* /assets/
+        
+        volumeMounts:
+        - name: frontend-assets
+          mountPath: /assets
+      
+      containers:
+      # Main nginx container serving frontend
+      - name: nginx
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        
+        volumeMounts:
+        - name: frontend-assets
+          mountPath: /usr/share/nginx/html
+        - name: nginx-frontend-config
+          mountPath: /etc/nginx/conf.d
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      
+      # Nginx metrics exporter sidecar
+      - name: nginx-exporter
+        image: nginx/nginx-prometheus-exporter:latest
+        ports:
+        - containerPort: 9113
+          name: metrics
+        
+        args:
+        - "-nginx.scrape-uri=http://localhost/nginx_status"
+        
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "25m"
+      
+      # CDN cache sidecar
+      - name: cdn-cache
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 8081
+          name: cache
+        
+        volumeMounts:
+        - name: cache-config
+          mountPath: /etc/nginx/conf.d
+        - name: cache-storage
+          mountPath: /var/cache/nginx
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+      
+      volumes:
+      - name: frontend-assets
+        emptyDir: {}
+      - name: nginx-frontend-config
+        configMap:
+          name: frontend-nginx-config
+      - name: cache-config
+        configMap:
+          name: cdn-cache-config
+      - name: cache-storage
+        emptyDir: {}
+
+---
+# Frontend service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  labels:
+    app: multi-tier-app
+    tier: presentation
+spec:
+  selector:
+    app: multi-tier-app
+    tier: presentation
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  - port: 9113
+    targetPort: 9113
+    name: metrics
+  - port: 8081
+    targetPort: 8081
+    name: cache
+  type: LoadBalancer  # Expose to external traffic
+
+---
+# Frontend nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx-config
+  labels:
+    app: multi-tier-app
+    tier: presentation
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Enable gzip compression
+        gzip on;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+        
+        # Security headers
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        
+        # Serve static files
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+            
+            # Cache static assets
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
+        
+        # API proxy to business tier
+        location /api/ {
+            proxy_pass http://business-service/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # CORS headers
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+            
+            # Handle preflight requests
+            if ($request_method = 'OPTIONS') {
+                add_header Access-Control-Allow-Origin *;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+                add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+                add_header Access-Control-Max-Age 86400;
+                add_header Content-Length 0;
+                add_header Content-Type text/plain;
+                return 204;
+            }
+        }
+        
+        # Nginx status for metrics
+        location /nginx_status {
+            stub_status;
+            allow 127.0.0.1;
+            deny all;
+        }
+        
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "Frontend healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# CDN cache configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cdn-cache-config
+  labels:
+    app: multi-tier-app
+    tier: presentation
+data:
+  default.conf: |
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=cdn_cache:10m max_size=100m inactive=60m use_temp_path=off;
+    
+    server {
+        listen 8081;
+        server_name localhost;
+        
+        # Cache configuration
+        proxy_cache cdn_cache;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_lock on;
+        
+        location / {
+            proxy_pass http://localhost:80;
+            proxy_set_header Host $host;
+            
+            # Cache static assets for longer
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                proxy_cache_valid 200 1h;
+                add_header X-Cache-Status $upstream_cache_status;
+            }
+            
+            # Cache API responses briefly
+            location /api/ {
+                proxy_cache_valid 200 5m;
+                add_header X-Cache-Status $upstream_cache_status;
+            }
+        }
+    }
+
+---
+# =============================================================================
+# SECTION 4: Ingress and Load Balancer
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-tier-ingress
+  labels:
+    app: multi-tier-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization"
+spec:
+  rules:
+  - host: multi-tier-app.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: business-service
+            port:
+              number: 80
+
+---
+# =============================================================================
+# SECTION 5: Monitoring and Observability
+# =============================================================================
+
+# ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: multi-tier-app-metrics
+  labels:
+    app: multi-tier-app
+spec:
+  selector:
+    matchLabels:
+      app: multi-tier-app
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+
+---
+# NetworkPolicy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: multi-tier-network-policy
+  labels:
+    app: multi-tier-app
+spec:
+  podSelector:
+    matchLabels:
+      app: multi-tier-app
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: multi-tier-app
+  - from: []  # Allow external traffic to frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: multi-tier-app
+  - to: []  # Allow external DNS and other essential services
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53

@@ -1,0 +1,257 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: failing-pod
+  labels:
+    app: failing-pod-demo
+    tier: learning
+    pattern: failure-scenarios
+  annotations:
+    description: "Demonstrates various pod failure scenarios and states"
+    learning.kubernetes.io/exercise: "failure-handling"
+spec:
+  containers:
+  - name: crash-container
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "=== FAILING POD DEMO ==="
+      echo "Container starting at $(date)"
+      
+      # Read failure mode from environment
+      FAILURE_MODE=${FAILURE_MODE:-"crash-after-delay"}
+      echo "Failure mode: $FAILURE_MODE"
+      
+      case $FAILURE_MODE in
+        "immediate-crash")
+          echo "Simulating immediate crash..."
+          exit 1
+          ;;
+        "crash-after-delay")
+          echo "Running normally for 30 seconds, then crashing..."
+          sleep 30
+          echo "Time to crash!"
+          exit 1
+          ;;
+        "memory-leak")
+          echo "Simulating memory leak..."
+          # Create large files to consume memory
+          while true; do
+            dd if=/dev/zero of=/tmp/leak-$RANDOM bs=1M count=10 2>/dev/null
+            echo "Memory usage increasing..."
+            sleep 2
+          done
+          ;;
+        "infinite-restart")
+          echo "Running for 10 seconds then crashing (will cause CrashLoopBackOff)..."
+          sleep 10
+          echo "Crashing to demonstrate restart behavior..."
+          exit 1
+          ;;
+        "health-check-failure")
+          echo "Starting up normally but failing health checks..."
+          sleep 60  # Stay alive but don't create the health check file
+          ;;
+        "startup-failure")
+          echo "Simulating startup failure after some time..."
+          sleep 15
+          echo "Startup failed!"
+          exit 1
+          ;;
+        *)
+          echo "Unknown failure mode: $FAILURE_MODE"
+          echo "Available modes: immediate-crash, crash-after-delay, memory-leak, infinite-restart, health-check-failure, startup-failure"
+          exit 1
+          ;;
+      esac
+    
+    env:
+    - name: FAILURE_MODE
+      value: "crash-after-delay"  # Change this to test different scenarios
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"  # Low limit to demonstrate memory issues
+        cpu: "50m"
+    
+    # Health checks that will fail in certain scenarios
+    readinessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "test -f /tmp/ready-marker"
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+    
+    livenessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "test -f /tmp/alive-marker"
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 2
+  
+  restartPolicy: Always  # Will cause restarts on failure
+
+---
+# Pod that demonstrates startup failure
+apiVersion: v1
+kind: Pod
+metadata:
+  name: startup-failure-pod
+  labels:
+    app: startup-failure-demo
+    scenario: startup-failure
+spec:
+  containers:
+  - name: failing-startup
+    image: "nonexistent-image:latest"  # This will cause ImagePullBackOff
+    command: ["echo", "This won't run"]
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+  
+  restartPolicy: Always
+
+---
+# Pod that demonstrates resource constraint issues
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-constrained-pod
+  labels:
+    app: resource-demo
+    scenario: resource-constraints
+spec:
+  containers:
+  - name: resource-hungry
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Starting resource-hungry container..."
+      echo "Requesting resources that exceed node capacity..."
+      sleep 3600
+    
+    resources:
+      requests:
+        memory: "10Gi"  # Deliberately high to cause pending state
+        cpu: "8"
+      limits:
+        memory: "20Gi"
+        cpu: "16"
+  
+  restartPolicy: Always
+
+---
+# Pod demonstrating CrashLoopBackOff
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crashloop-demo
+  labels:
+    app: crashloop-demo
+    scenario: crash-loop-backoff
+spec:
+  containers:
+  - name: crasher
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Container attempt #$RESTART_COUNT starting..."
+      echo "This container will crash after 5 seconds"
+      echo "Kubernetes will restart it, causing CrashLoopBackOff"
+      sleep 5
+      echo "Crashing now!"
+      exit 1
+    
+    env:
+    - name: RESTART_COUNT
+      value: "1"  # In real scenarios, this would increment
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  restartPolicy: Always
+
+---
+# Pod demonstrating different termination scenarios
+apiVersion: v1
+kind: Pod
+metadata:
+  name: termination-demo
+  labels:
+    app: termination-demo
+    scenario: graceful-termination
+spec:
+  containers:
+  - name: graceful-app
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      # Set up signal handlers
+      cleanup() {
+        echo "Received termination signal, starting graceful shutdown..."
+        echo "Saving application state..."
+        sleep 3
+        echo "Closing connections..."
+        sleep 2
+        echo "Cleanup complete, exiting gracefully"
+        exit 0
+      }
+      
+      # Trap SIGTERM for graceful shutdown
+      trap cleanup TERM
+      
+      echo "Application starting with graceful shutdown support..."
+      echo "PID: $$"
+      
+      # Simulate application work
+      while true; do
+        echo "Application working... $(date)"
+        sleep 10
+      done
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    # Lifecycle hooks for demonstration
+    lifecycle:
+      preStop:
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "PreStop hook: Preparing for termination..."
+            sleep 2
+  
+  # Allow time for graceful shutdown
+  terminationGracePeriodSeconds: 30
+  restartPolicy: Always

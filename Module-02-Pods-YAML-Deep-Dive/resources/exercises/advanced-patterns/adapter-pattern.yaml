@@ -1,0 +1,815 @@
+# Adapter Pattern - Advanced Container Pattern Implementation
+# This demonstrates the Adapter pattern for transforming application output for external systems
+
+# =============================================================================
+# SECTION 1: Log Adapter Pattern - Transform Application Logs
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: adapter-log-demo
+  labels:
+    app: adapter-demo
+    pattern: adapter
+    component: log-transformation
+  annotations:
+    description: "Adapter pattern for log format transformation"
+    pattern.type: "adapter"
+    use-case: "Transform application logs for centralized logging system"
+spec:
+  containers:
+  
+  # Main application container (produces logs in custom format)
+  - name: legacy-app
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Legacy application starting..."
+      echo "Generating logs in custom legacy format..."
+      
+      # Create log directory
+      mkdir -p /app/logs
+      
+      # Generate logs in legacy format
+      counter=1
+      while true; do
+        # Legacy log format: TIMESTAMP|LEVEL|MODULE|MESSAGE
+        timestamp=$(date '+%Y%m%d_%H%M%S')
+        
+        # Simulate different log levels and modules
+        case $((counter % 4)) in
+          0) level="ERROR"; module="DATABASE"; message="Connection timeout after 30s" ;;
+          1) level="INFO"; module="AUTH"; message="User login successful: user_$counter" ;;
+          2) level="WARN"; module="CACHE"; message="Cache miss for key: session_$counter" ;;  
+          3) level="DEBUG"; module="API"; message="Processing request ID: req_$counter" ;;
+        esac
+        
+        # Write to application log file
+        echo "$timestamp|$level|$module|$message" >> /app/logs/application.log
+        
+        # Also write to stdout (legacy behavior)
+        echo "[$timestamp] $level - $module: $message"
+        
+        # Simulate application errors occasionally
+        if [ $((counter % 10)) -eq 0 ]; then
+          echo "$timestamp|ERROR|SYSTEM|Critical error: Memory usage at 95%" >> /app/logs/application.log
+          echo "$timestamp|ERROR|SYSTEM|Stack trace: at com.example.service" >> /app/logs/application.log
+        fi
+        
+        counter=$((counter + 1))
+        sleep 15
+      done
+    
+    volumeMounts:
+    - name: app-logs
+      mountPath: /app/logs
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Adapter container (transforms logs to standard format)
+  - name: log-adapter
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Log adapter starting..."
+      echo "Transforming legacy logs to JSON format for centralized logging"
+      
+      # Install jq for JSON processing (in real scenario, use image with jq)
+      # For demo, we'll create JSON manually
+      
+      # Create output directory
+      mkdir -p /transformed/logs
+      
+      # Monitor the application log file and transform entries
+      tail -F /app/logs/application.log 2>/dev/null | while IFS='|' read timestamp level module message; do
+        if [ -n "$timestamp" ] && [ -n "$level" ] && [ -n "$module" ] && [ -n "$message" ]; then
+          # Transform to structured JSON format for centralized logging
+          iso_timestamp=$(date -d "${timestamp:0:4}-${timestamp:4:2}-${timestamp:6:2} ${timestamp:9:2}:${timestamp:11:2}:${timestamp:13:2}" -Iseconds 2>/dev/null || echo "$(date -Iseconds)")
+          
+          # Create JSON log entry
+          json_entry=$(cat <<EOF
+{
+  "timestamp": "$iso_timestamp",
+  "level": "$level",
+  "service": "legacy-app",
+  "module": "$module",
+  "message": "$message",
+  "pod_name": "$HOSTNAME",
+  "namespace": "$POD_NAMESPACE",
+  "cluster": "production",
+  "version": "1.0.0"
+}
+EOF
+)
+          
+          # Write transformed log to output file
+          echo "$json_entry" >> /transformed/logs/structured.json
+          
+          # Also output to stdout for container logging
+          echo "TRANSFORMED: $json_entry"
+          
+          # Send to metrics collector (simulated)
+          if [ "$level" = "ERROR" ]; then
+            echo "ERROR_METRIC: $(date -Iseconds) error_count=1 service=legacy-app module=$module" >> /transformed/logs/metrics.log
+          fi
+        fi
+      done
+    
+    env:
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: HOSTNAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    
+    volumeMounts:
+    - name: app-logs
+      mountPath: /app/logs
+      readOnly: true
+    - name: transformed-logs
+      mountPath: /transformed/logs
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Log shipper sidecar (sends transformed logs to external system)
+  - name: log-shipper
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Log shipper starting..."
+      echo "Shipping transformed logs to external logging system"
+      
+      while true; do
+        if [ -f /transformed/logs/structured.json ]; then
+          echo "=== Shipping logs to external system $(date) ==="
+          
+          # Simulate sending to external logging system (e.g., ELK, Splunk)
+          lines_to_ship=$(wc -l < /transformed/logs/structured.json)
+          echo "Found $lines_to_ship log entries to ship"
+          
+          if [ "$lines_to_ship" -gt 0 ]; then
+            # Simulate HTTP POST to logging endpoint
+            echo "POST /api/logs HTTP/1.1"
+            echo "Content-Type: application/json"
+            echo "X-API-Key: secret-key"
+            echo ""
+            
+            # Read and "ship" recent entries
+            tail -n 10 /transformed/logs/structured.json | while read log_entry; do
+              echo "Shipping: $log_entry"
+              # In real scenario: curl -X POST -H "Content-Type: application/json" -d "$log_entry" http://log-collector:9200/logs
+            done
+            
+            echo "Logs shipped successfully"
+          fi
+        fi
+        
+        # Ship metrics
+        if [ -f /transformed/logs/metrics.log ]; then
+          echo "=== Shipping metrics $(date) ==="
+          tail -n 5 /transformed/logs/metrics.log | while read metric; do
+            echo "Shipping metric: $metric"
+          done
+        fi
+        
+        sleep 60
+      done
+    
+    volumeMounts:
+    - name: transformed-logs
+      mountPath: /transformed/logs
+      readOnly: true
+    
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+  
+  volumes:
+  - name: app-logs
+    emptyDir: {}
+  - name: transformed-logs
+    emptyDir: {}
+
+---
+# =============================================================================
+# SECTION 2: Metrics Adapter Pattern - Transform Application Metrics
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: adapter-metrics-demo
+  labels:
+    app: adapter-demo
+    pattern: adapter
+    component: metrics-transformation
+  annotations:
+    description: "Adapter pattern for metrics format transformation"
+    pattern.benefits: "Convert proprietary metrics to Prometheus format"
+spec:
+  containers:
+  
+  # Main application container (produces metrics in custom format)
+  - name: custom-app
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Custom application starting..."
+      echo "Generating metrics in proprietary format..."
+      
+      mkdir -p /app/metrics
+      
+      # Generate custom metrics format
+      counter=1
+      while true; do
+        timestamp=$(date +%s)
+        
+        # Custom metrics format: METRIC_NAME:VALUE:TIMESTAMP:TAGS
+        cpu_usage=$((RANDOM % 100))
+        memory_usage=$((RANDOM % 100))
+        request_count=$((counter * 3))
+        error_count=$((counter / 10))
+        
+        # Write custom format metrics
+        cat > /app/metrics/app_metrics.txt <<EOF
+CPU_USAGE:$cpu_usage:$timestamp:service=custom-app,instance=1
+MEMORY_USAGE:$memory_usage:$timestamp:service=custom-app,instance=1
+REQUEST_COUNT:$request_count:$timestamp:service=custom-app,instance=1
+ERROR_COUNT:$error_count:$timestamp:service=custom-app,instance=1
+ACTIVE_CONNECTIONS:$((RANDOM % 50)):$timestamp:service=custom-app,instance=1
+DATABASE_CONNECTIONS:$((RANDOM % 20)):$timestamp:service=custom-app,instance=1
+CACHE_HIT_RATIO:$((RANDOM % 100)):$timestamp:service=custom-app,instance=1
+EOF
+        
+        echo "Generated metrics at $(date)"
+        counter=$((counter + 1))
+        sleep 30
+      done
+    
+    volumeMounts:
+    - name: app-metrics
+      mountPath: /app/metrics
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Adapter container (transforms metrics to Prometheus format)
+  - name: metrics-adapter
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Metrics adapter starting..."
+      echo "Converting custom metrics to Prometheus format"
+      
+      mkdir -p /prometheus/metrics
+      
+      while true; do
+        if [ -f /app/metrics/app_metrics.txt ]; then
+          echo "# HELP custom_app_metrics Converted metrics from custom application" > /prometheus/metrics/metrics.prom
+          echo "# TYPE custom_app_metrics gauge" >> /prometheus/metrics/metrics.prom
+          
+          # Read custom format and convert to Prometheus format
+          while IFS=':' read metric_name value timestamp tags; do
+            if [ -n "$metric_name" ] && [ -n "$value" ]; then
+              # Convert metric name to Prometheus style
+              prom_name=$(echo "$metric_name" | tr '[:upper:]' '[:lower:]' | sed 's/_//g')
+              
+              # Parse tags
+              if [ -n "$tags" ]; then
+                prom_tags=$(echo "$tags" | sed 's/,/, /g')
+                echo "custom_app_${prom_name}{$prom_tags} $value" >> /prometheus/metrics/metrics.prom
+              else
+                echo "custom_app_${prom_name} $value" >> /prometheus/metrics/metrics.prom
+              fi
+            fi
+          done < /app/metrics/app_metrics.txt
+          
+          # Add adapter metadata
+          echo "custom_app_adapter_last_update $(date +%s)" >> /prometheus/metrics/metrics.prom
+          echo "custom_app_adapter_conversions_total $(($(wc -l < /app/metrics/app_metrics.txt) - 1))" >> /prometheus/metrics/metrics.prom
+          
+          echo "Metrics converted to Prometheus format at $(date)"
+        fi
+        
+        sleep 15
+      done
+    
+    volumeMounts:
+    - name: app-metrics
+      mountPath: /app/metrics
+      readOnly: true
+    - name: prometheus-metrics
+      mountPath: /prometheus/metrics
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Prometheus metrics server (exposes converted metrics)
+  - name: metrics-server
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Metrics server starting on port 9090..."
+      
+      # Simple HTTP server using netcat
+      while true; do
+        echo "Waiting for metrics request..."
+        
+        # Create HTTP response
+        if [ -f /prometheus/metrics/metrics.prom ]; then
+          metrics_content=$(cat /prometheus/metrics/metrics.prom)
+          content_length=$(echo -n "$metrics_content" | wc -c)
+          
+          response="HTTP/1.1 200 OK\r
+Content-Type: text/plain; version=0.0.4\r
+Content-Length: $content_length\r
+\r
+$metrics_content"
+        else
+          response="HTTP/1.1 404 Not Found\r
+Content-Type: text/plain\r
+Content-Length: 21\r
+\r
+Metrics not available"
+        fi
+        
+        # Simple netcat-based HTTP server
+        echo -e "$response" | nc -l -p 9090 -q 1
+        
+        sleep 1
+      done
+    
+    ports:
+    - containerPort: 9090
+      name: metrics
+    
+    volumeMounts:
+    - name: prometheus-metrics
+      mountPath: /prometheus/metrics
+      readOnly: true
+    
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+    
+    readinessProbe:
+      tcpSocket:
+        port: 9090
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    
+    livenessProbe:
+      tcpSocket:
+        port: 9090
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  
+  volumes:
+  - name: app-metrics
+    emptyDir: {}
+  - name: prometheus-metrics
+    emptyDir: {}
+
+---
+# =============================================================================
+# SECTION 3: Protocol Adapter Pattern - Database Protocol Conversion
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: adapter-protocol-demo
+  labels:
+    app: adapter-demo
+    pattern: adapter
+    component: protocol-conversion
+  annotations:
+    description: "Adapter pattern for protocol conversion (REST to GraphQL)"
+    pattern.use-case: "Convert REST API calls to GraphQL queries"
+spec:
+  containers:
+  
+  # Main application (expects GraphQL API)
+  - name: graphql-client
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "GraphQL client application starting..."
+      echo "Making GraphQL queries via adapter at localhost:4000"
+      
+      # Install curl
+      apk add --no-cache curl
+      
+      # Wait for adapter
+      until nc -z localhost 4000; do
+        echo "Waiting for GraphQL adapter..."
+        sleep 2
+      done
+      
+      echo "Adapter ready! Starting GraphQL operations..."
+      
+      while true; do
+        echo "=== GraphQL Query: Get Users ==="
+        graphql_query='{"query": "{ users { id name email } }"}'
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "$graphql_query" \
+          http://localhost:4000/graphql || echo "GraphQL query failed"
+        
+        echo -e "\n=== GraphQL Query: Get User by ID ==="
+        graphql_query='{"query": "{ user(id: 1) { id name email posts { title } } }"}'
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "$graphql_query" \
+          http://localhost:4000/graphql || echo "GraphQL query failed"
+        
+        echo -e "\n=== GraphQL Mutation: Create User ==="
+        graphql_mutation='{"query": "mutation { createUser(name: \"John Doe\", email: \"john@example.com\") { id name } }"}'
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "$graphql_mutation" \
+          http://localhost:4000/graphql || echo "GraphQL mutation failed"
+        
+        echo -e "\nWaiting before next set of queries..."
+        sleep 45
+      done
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Adapter container (converts GraphQL to REST API calls)
+  - name: graphql-adapter
+    image: node:16-alpine
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "GraphQL to REST adapter starting..."
+      
+      # Create a simple GraphQL adapter server
+      cat > /app/adapter.js <<'EOF'
+      const http = require('http');
+      const url = require('url');
+      
+      const server = http.createServer((req, res) => {
+        // Enable CORS
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200);
+          res.end();
+          return;
+        }
+        
+        if (req.method === 'POST' && req.url === '/graphql') {
+          let body = '';
+          req.on('data', chunk => body += chunk);
+          req.on('end', async () => {
+            try {
+              const { query } = JSON.parse(body);
+              console.log('Received GraphQL query:', query);
+              
+              // Parse GraphQL query and convert to REST calls
+              let result;
+              
+              if (query.includes('users {')) {
+                console.log('Converting: users query -> REST GET /api/users');
+                result = await makeRestCall('GET', '/api/users');
+                result = { data: { users: result } };
+              } else if (query.includes('user(id:')) {
+                const idMatch = query.match(/user\(id:\s*(\d+)\)/);
+                const userId = idMatch ? idMatch[1] : '1';
+                console.log(\`Converting: user(id: \${userId}) -> REST GET /api/users/\${userId}\`);
+                result = await makeRestCall('GET', \`/api/users/\${userId}\`);
+                result = { data: { user: result } };
+              } else if (query.includes('createUser')) {
+                const nameMatch = query.match(/name:\s*"([^"]+)"/);
+                const emailMatch = query.match(/email:\s*"([^"]+)"/);
+                const userData = {
+                  name: nameMatch ? nameMatch[1] : 'Unknown',
+                  email: emailMatch ? emailMatch[1] : 'unknown@example.com'
+                };
+                console.log('Converting: createUser mutation -> REST POST /api/users');
+                result = await makeRestCall('POST', '/api/users', userData);
+                result = { data: { createUser: result } };
+              } else {
+                result = { errors: [{ message: 'Unsupported query' }] };
+              }
+              
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(result));
+            } catch (error) {
+              console.error('Error processing GraphQL:', error);
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ errors: [{ message: 'Internal server error' }] }));
+            }
+          });
+        } else {
+          res.writeHead(404);
+          res.end('Not found');
+        }
+      });
+      
+      async function makeRestCall(method, path, data = null) {
+        return new Promise((resolve, reject) => {
+          const options = {
+            hostname: 'rest-api-service',
+            port: 80,
+            path: path,
+            method: method,
+            headers: { 'Content-Type': 'application/json' }
+          };
+          
+          const req = http.request(options, (res) => {
+            let responseData = '';
+            res.on('data', chunk => responseData += chunk);
+            res.on('end', () => {
+              try {
+                if (responseData) {
+                  resolve(JSON.parse(responseData));
+                } else {
+                  resolve({ success: true });
+                }
+              } catch (e) {
+                console.error('Failed to parse REST response:', responseData);
+                resolve({ error: 'Invalid JSON response' });
+              }
+            });
+          });
+          
+          req.on('error', (error) => {
+            console.error('REST call failed:', error);
+            resolve({ error: error.message });
+          });
+          
+          if (data) {
+            req.write(JSON.stringify(data));
+          }
+          req.end();
+        });
+      }
+      
+      server.listen(4000, () => {
+        console.log('GraphQL adapter server listening on port 4000');
+      });
+      EOF
+      
+      node /app/adapter.js
+    
+    ports:
+    - containerPort: 4000
+      name: graphql
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    readinessProbe:
+      httpGet:
+        path: /graphql
+        port: 4000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    
+    livenessProbe:
+      httpGet:
+        path: /graphql
+        port: 4000
+      initialDelaySeconds: 15
+      periodSeconds: 30
+  
+  # Request monitor sidecar
+  - name: request-monitor
+    image: busybox:1.35
+    command:
+    - "/bin/sh" 
+    - "-c"
+    - |
+      echo "Request monitor starting..."
+      
+      while true; do
+        echo "=== Adapter Request Monitor $(date) ==="
+        
+        # Monitor GraphQL adapter
+        if nc -z localhost 4000; then
+          echo "✅ GraphQL adapter is running on port 4000"
+        else
+          echo "❌ GraphQL adapter is not accessible"
+        fi
+        
+        # Monitor REST API service
+        if nc -z rest-api-service 80; then
+          echo "✅ REST API service is accessible"
+        else
+          echo "❌ REST API service is not accessible"
+        fi
+        
+        # Check process status
+        echo "Running processes:"
+        ps aux | grep -E "(node|graphql)" | grep -v grep || echo "No GraphQL processes found"
+        
+        sleep 60
+      done
+    
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+
+---
+# REST API service (backend that GraphQL adapter calls)
+apiVersion: v1
+kind: Service
+metadata:
+  name: rest-api-service
+  labels:
+    app: rest-api
+  annotations:
+    description: "REST API service for adapter pattern demo"
+spec:
+  selector:
+    app: rest-api
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+
+---
+# REST API deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rest-api
+  labels:
+    app: rest-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rest-api
+  
+  template:
+    metadata:
+      labels:
+        app: rest-api
+    
+    spec:
+      containers:
+      - name: api-server
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 80
+        
+        volumeMounts:
+        - name: api-config
+          mountPath: /etc/nginx/conf.d
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+      
+      volumes:
+      - name: api-config
+        configMap:
+          name: rest-api-config
+
+---
+# REST API configuration (simulated API responses)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rest-api-config
+  labels:
+    app: rest-api
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Users endpoints
+        location = /api/users {
+            if ($request_method = GET) {
+                add_header Content-Type application/json;
+                return 200 '[
+                  {"id": 1, "name": "John Doe", "email": "john@example.com"},
+                  {"id": 2, "name": "Jane Smith", "email": "jane@example.com"}
+                ]';
+            }
+            if ($request_method = POST) {
+                add_header Content-Type application/json;
+                return 201 '{"id": 3, "name": "New User", "email": "new@example.com"}';
+            }
+        }
+        
+        location ~ ^/api/users/(\d+)$ {
+            add_header Content-Type application/json;
+            return 200 '{
+              "id": $1,
+              "name": "User $1",
+              "email": "user$1@example.com",
+              "posts": [
+                {"title": "First Post"},
+                {"title": "Second Post"}
+              ]
+            }';
+        }
+        
+        # Health check
+        location /health {
+            add_header Content-Type text/plain;
+            return 200 "REST API healthy";
+        }
+        
+        # Default response
+        location / {
+            add_header Content-Type application/json;
+            return 200 '{"message": "REST API Server", "timestamp": "$time_iso8601"}';
+        }
+    }
+
+---
+# Service to expose adapter demos
+apiVersion: v1
+kind: Service
+metadata:
+  name: adapter-demo-service
+  labels:
+    app: adapter-demo
+  annotations:
+    description: "Service for accessing adapter pattern demos"
+spec:
+  selector:
+    app: adapter-demo
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  - name: graphql
+    port: 4000
+    targetPort: 4000
+  type: ClusterIP

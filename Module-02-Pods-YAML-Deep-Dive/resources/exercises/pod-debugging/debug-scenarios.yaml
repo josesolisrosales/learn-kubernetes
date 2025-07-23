@@ -1,0 +1,765 @@
+# Debug Scenarios - Practice Pod Troubleshooting
+# This file contains various problematic pod configurations for debugging practice
+
+# =============================================================================
+# SCENARIO 1: ImagePullBackOff - Incorrect Image Name
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-image-pull-error
+  labels:
+    app: debug-scenario
+    scenario: image-pull-error
+    difficulty: beginner
+  annotations:
+    debug.scenario: "ImagePullBackOff due to incorrect image name"
+    debug.expected-error: "ErrImagePull, ImagePullBackOff"
+    debug.solution: "Fix the image name from 'nonexistent-image' to a valid image"
+spec:
+  containers:
+  - name: broken-container
+    image: nonexistent-image:latest      # PROBLEM: This image doesn't exist
+    ports:
+    - containerPort: 80
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# Solution ConfigMap for Scenario 1
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-1-solution
+  annotations:
+    debug.scenario: "1"
+    debug.title: "ImagePullBackOff Fix"
+data:
+  problem: |
+    Pod is stuck in ImagePullBackOff state because the image 'nonexistent-image:latest' doesn't exist.
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-image-pull-error
+    2. Look for "Failed to pull image" in events
+    3. kubectl get events --field-selector involvedObject.name=debug-image-pull-error
+  
+  solution: |
+    # Fix by updating the image to a valid one:
+    kubectl patch pod debug-image-pull-error -p '{"spec":{"containers":[{"name":"broken-container","image":"nginx:1.21"}]}}'
+    
+    # Or delete and recreate with correct image:
+    kubectl delete pod debug-image-pull-error
+    # Then apply with corrected YAML
+
+---
+# =============================================================================
+# SCENARIO 2: CrashLoopBackOff - Application Error
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-crash-loop
+  labels:
+    app: debug-scenario
+    scenario: crash-loop-backoff
+    difficulty: intermediate
+  annotations:
+    debug.scenario: "CrashLoopBackOff due to application startup failure"
+    debug.expected-error: "CrashLoopBackOff"
+    debug.solution: "Fix the command and add proper health checks"
+spec:
+  containers:
+  - name: crashing-app
+    image: busybox:1.35
+    command: 
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Starting application..."
+      echo "Simulating application crash after 10 seconds"
+      sleep 10
+      echo "Application encountered fatal error!"
+      exit 1                            # PROBLEM: Always exits with error
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    # Health checks that will also fail
+    readinessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "test -f /tmp/app-ready"      # PROBLEM: File never created
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+    
+    livenessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "ps aux | grep -v grep | grep sleep"  # PROBLEM: No sleep process
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      failureThreshold: 2
+
+---
+# Solution ConfigMap for Scenario 2  
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-2-solution
+  annotations:
+    debug.scenario: "2"
+    debug.title: "CrashLoopBackOff Fix"
+data:
+  problem: |
+    Pod keeps crashing because:
+    1. Application always exits with code 1
+    2. Readiness probe looks for file that's never created
+    3. Liveness probe looks for process that doesn't exist
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-crash-loop
+    2. kubectl logs debug-crash-loop --previous
+    3. Check restart count: kubectl get pod debug-crash-loop
+    4. Check container status: kubectl get pod debug-crash-loop -o yaml | grep -A10 containerStatuses
+  
+  solution: |
+    # Fix the container command to run successfully:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: debug-crash-loop-fixed
+    spec:
+      containers:
+      - name: working-app
+        image: busybox:1.35
+        command: 
+        - "/bin/sh"
+        - "-c"  
+        - |
+          echo "Starting healthy application..."
+          touch /tmp/app-ready
+          while true; do
+            echo "Application is running at $(date)"
+            sleep 30
+          done
+        readinessProbe:
+          exec:
+            command: ["test", "-f", "/tmp/app-ready"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pgrep", "sleep"]
+          initialDelaySeconds: 15
+          periodSeconds: 10
+
+---
+# =============================================================================
+# SCENARIO 3: Pending Pod - Resource Constraints
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-pending-resources
+  labels:
+    app: debug-scenario
+    scenario: pending-resources
+    difficulty: intermediate
+  annotations:
+    debug.scenario: "Pod pending due to excessive resource requests"
+    debug.expected-error: "FailedScheduling"
+    debug.solution: "Reduce resource requests to reasonable values"
+spec:
+  containers:
+  - name: resource-hungry
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    resources:
+      requests:
+        memory: "100Gi"                 # PROBLEM: Excessive memory request
+        cpu: "50"                       # PROBLEM: Excessive CPU request (50 cores)
+      limits:
+        memory: "200Gi"
+        cpu: "100"
+    
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+---
+# Solution ConfigMap for Scenario 3
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-3-solution
+  annotations:
+    debug.scenario: "3"
+    debug.title: "Pending Pod - Resource Constraints Fix"
+data:
+  problem: |
+    Pod remains in Pending state because resource requests exceed node capacity:
+    - Memory request: 100Gi (way too high for typical nodes)
+    - CPU request: 50 cores (way too high for typical nodes)
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-pending-resources
+    2. kubectl get nodes -o wide
+    3. kubectl describe nodes  # Check available resources
+    4. kubectl top nodes       # Check current resource usage
+    5. Look for "Insufficient cpu" or "Insufficient memory" in pod events
+  
+  solution: |
+    # Reduce resource requests to reasonable values:
+    kubectl patch pod debug-pending-resources -p '{"spec":{"containers":[{"name":"resource-hungry","resources":{"requests":{"memory":"128Mi","cpu":"100m"},"limits":{"memory":"256Mi","cpu":"200m"}}}]}}'
+    
+    # Or delete and recreate with correct resources:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: debug-pending-resources-fixed
+    spec:
+      containers:
+      - name: resource-reasonable
+        image: nginx:1.21
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# =============================================================================
+# SCENARIO 4: Volume Mount Issues
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-volume-mount
+  labels:
+    app: debug-scenario
+    scenario: volume-mount-error
+    difficulty: intermediate
+  annotations:
+    debug.scenario: "Pod fails due to volume mount issues"
+    debug.expected-error: "ContainerCreating, mounting issues"
+    debug.solution: "Fix ConfigMap name and create missing Secret"
+spec:
+  containers:
+  - name: volume-app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+      readOnly: true
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+    - name: data-volume
+      mountPath: /data
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  
+  volumes:
+  - name: config-volume
+    configMap:
+      name: nonexistent-configmap        # PROBLEM: ConfigMap doesn't exist
+  - name: secret-volume
+    secret:
+      secretName: nonexistent-secret     # PROBLEM: Secret doesn't exist
+  - name: data-volume
+    persistentVolumeClaim:
+      claimName: nonexistent-pvc         # PROBLEM: PVC doesn't exist
+
+---
+# Solution resources for Scenario 4
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-4-configmap
+  labels:
+    debug-solution: "scenario-4"
+data:
+  app.properties: |
+    app.name=Debug Scenario App
+    app.version=1.0.0
+    log.level=INFO
+  
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: debug-scenario-4-secret
+  labels:
+    debug-solution: "scenario-4"
+type: Opaque
+data:
+  username: YWRtaW4=                    # admin (base64)
+  password: cGFzc3dvcmQ=                # password (base64)
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: debug-scenario-4-pvc
+  labels:
+    debug-solution: "scenario-4"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-4-solution
+  annotations:
+    debug.scenario: "4"
+    debug.title: "Volume Mount Issues Fix"
+data:
+  problem: |
+    Pod stuck in ContainerCreating because:
+    1. ConfigMap 'nonexistent-configmap' doesn't exist
+    2. Secret 'nonexistent-secret' doesn't exist  
+    3. PVC 'nonexistent-pvc' doesn't exist
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-volume-mount
+    2. kubectl get configmap nonexistent-configmap
+    3. kubectl get secret nonexistent-secret
+    4. kubectl get pvc nonexistent-pvc
+    5. Look for "MountVolume.SetUp failed" in pod events
+  
+  solution: |
+    # Create the missing resources first:
+    kubectl apply -f - <<EOF
+    # (Apply the ConfigMap, Secret, and PVC above)
+    EOF
+    
+    # Then fix the pod spec to reference correct names:
+    kubectl patch pod debug-volume-mount -p '{"spec":{"volumes":[{"name":"config-volume","configMap":{"name":"debug-scenario-4-configmap"}},{"name":"secret-volume","secret":{"secretName":"debug-scenario-4-secret"}},{"name":"data-volume","persistentVolumeClaim":{"claimName":"debug-scenario-4-pvc"}}]}}'
+
+---
+# =============================================================================
+# SCENARIO 5: Node Selector / Affinity Issues
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-node-selector
+  labels:
+    app: debug-scenario
+    scenario: node-selector-error
+    difficulty: advanced
+  annotations:
+    debug.scenario: "Pod pending due to node selector mismatch"
+    debug.expected-error: "FailedScheduling"
+    debug.solution: "Fix node selector or add appropriate labels to nodes"
+spec:
+  containers:
+  - name: selective-app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  
+  nodeSelector:
+    disktype: ssd                       # PROBLEM: No nodes have this label
+    zone: us-west-2a                    # PROBLEM: No nodes have this label
+    special-hardware: gpu               # PROBLEM: No nodes have this label
+
+---
+# Solution ConfigMap for Scenario 5
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-5-solution
+  annotations:
+    debug.scenario: "5"
+    debug.title: "Node Selector Issues Fix"
+data:
+  problem: |
+    Pod remains in Pending state because node selector requirements cannot be satisfied:
+    - disktype: ssd
+    - zone: us-west-2a  
+    - special-hardware: gpu
+    No nodes have all these labels.
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-node-selector
+    2. kubectl get nodes --show-labels
+    3. Look for "FailedScheduling" with reason about node selector
+    4. Compare required labels with available node labels
+  
+  solution: |
+    Option 1: Remove or fix node selector requirements
+    kubectl patch pod debug-node-selector -p '{"spec":{"nodeSelector":null}}'
+    
+    Option 2: Add required labels to a node
+    kubectl label node <node-name> disktype=ssd zone=us-west-2a special-hardware=gpu
+    
+    Option 3: Use less restrictive selector
+    kubectl patch pod debug-node-selector -p '{"spec":{"nodeSelector":{"kubernetes.io/os":"linux"}}}'
+
+---
+# =============================================================================
+# SCENARIO 6: Security Context Issues
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-security-context
+  labels:
+    app: debug-scenario
+    scenario: security-context-error
+    difficulty: advanced
+  annotations:
+    debug.scenario: "Pod fails due to security context restrictions"
+    debug.expected-error: "CreateContainerError"
+    debug.solution: "Fix security context to use non-root user"
+spec:
+  securityContext:
+    runAsUser: 0                        # PROBLEM: Running as root might be restricted
+    runAsNonRoot: true                  # PROBLEM: Conflicts with runAsUser: 0
+    fsGroup: 0
+  
+  containers:
+  - name: security-app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    securityContext:
+      runAsUser: 0                      # PROBLEM: Conflicts with pod-level runAsNonRoot
+      allowPrivilegeEscalation: true    # PROBLEM: Might be restricted by policy
+      privileged: true                  # PROBLEM: Might be restricted by policy
+      capabilities:
+        add: 
+        - SYS_ADMIN                     # PROBLEM: Dangerous capability
+        - NET_ADMIN
+    
+    resources:
+      requests:
+        memory: "64Mi" 
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# Solution ConfigMap for Scenario 6
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-6-solution
+  annotations:
+    debug.scenario: "6"
+    debug.title: "Security Context Issues Fix"
+data:
+  problem: |
+    Pod fails to start due to conflicting security context settings:
+    1. runAsUser: 0 conflicts with runAsNonRoot: true
+    2. privileged: true might be restricted by Pod Security Standards
+    3. Dangerous capabilities (SYS_ADMIN, NET_ADMIN) might be blocked
+    4. allowPrivilegeEscalation: true might be restricted
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-security-context
+    2. Look for "CreateContainerError" or security policy violations
+    3. Check if Pod Security Standards are enforced:
+       kubectl get ns default -o yaml | grep pod-security
+    4. Check for admission controller rejections in events
+  
+  solution: |
+    # Fix with secure, non-conflicting security context:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: debug-security-context-fixed
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 3000
+        runAsNonRoot: true
+        fsGroup: 2000
+      containers:
+      - name: security-app
+        image: nginx:1.21
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE  # Only necessary capability
+
+---
+# =============================================================================
+# SCENARIO 7: Health Check Failures
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-health-checks
+  labels:
+    app: debug-scenario
+    scenario: health-check-failure
+    difficulty: intermediate
+  annotations:
+    debug.scenario: "Pod running but failing health checks"
+    debug.expected-error: "Ready: False, health check failures"
+    debug.solution: "Fix health check configuration and endpoints"
+spec:
+  containers:
+  - name: unhealthy-app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi" 
+        cpu: "100m"
+    
+    # PROBLEM: Health checks with wrong configuration
+    readinessProbe:
+      httpGet:
+        path: /nonexistent-endpoint     # PROBLEM: Endpoint doesn't exist
+        port: 8080                      # PROBLEM: Wrong port (nginx runs on 80)
+        scheme: HTTPS                   # PROBLEM: nginx not configured for HTTPS
+      initialDelaySeconds: 1            # PROBLEM: Too short, nginx not ready
+      periodSeconds: 2                  # PROBLEM: Too frequent
+      timeoutSeconds: 1                 # PROBLEM: Too short
+      failureThreshold: 1               # PROBLEM: Too strict, one failure = not ready
+    
+    livenessProbe:
+      exec:
+        command:
+        - "curl"                        # PROBLEM: curl not available in nginx image
+        - "http://localhost/health"
+      initialDelaySeconds: 5            # PROBLEM: Too short for nginx startup
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 2
+
+---
+# Solution ConfigMap for Scenario 7
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-scenario-7-solution
+  annotations:
+    debug.scenario: "7"
+    debug.title: "Health Check Failures Fix"
+data:
+  problem: |
+    Pod is running but health checks are failing because:
+    1. Readiness probe checks wrong endpoint (/nonexistent-endpoint)
+    2. Readiness probe uses wrong port (8080 instead of 80)
+    3. Readiness probe uses HTTPS on HTTP-only nginx
+    4. Liveness probe uses 'curl' command not available in nginx image
+    5. Probe timing is too aggressive
+  
+  investigation-steps: |
+    1. kubectl describe pod debug-health-checks
+    2. kubectl get pod debug-health-checks  # Check Ready status
+    3. Look for "Readiness probe failed" or "Liveness probe failed" in events
+    4. Test endpoints manually:
+       kubectl exec debug-health-checks -- wget -O- http://localhost/
+  
+  solution: |
+    # Fix with correct health check configuration:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: debug-health-checks-fixed
+    spec:
+      containers:
+      - name: healthy-app
+        image: nginx:1.21
+        readinessProbe:
+          httpGet:
+            path: /                     # Use existing endpoint
+            port: 80                    # Correct port
+            scheme: HTTP                # Correct scheme
+          initialDelaySeconds: 10       # Allow nginx to start
+          periodSeconds: 10             # Reasonable frequency
+          timeoutSeconds: 5             # Reasonable timeout
+          failureThreshold: 3           # Allow some failures
+        livenessProbe:
+          httpGet:                      # Use HTTP check instead of exec
+            path: /
+            port: 80
+          initialDelaySeconds: 30       # Longer delay for liveness
+          periodSeconds: 30             # Less frequent checks
+          failureThreshold: 3
+
+---
+# =============================================================================
+# PRACTICE DEPLOYMENT: Multiple Issues Combined
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debug-challenge-deployment
+  labels:
+    app: debug-challenge
+    difficulty: expert
+  annotations:
+    debug.scenario: "Multiple issues combined - expert level challenge"
+    debug.description: "This deployment has multiple problems that need to be identified and fixed"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: debug-challenge
+  
+  template:
+    metadata:
+      labels:
+        app: debug-challenge
+    
+    spec:
+      containers:
+      - name: problematic-app
+        image: nginx:nonexistent-tag     # PROBLEM 1: Bad image tag
+        ports:
+        - containerPort: 80
+        
+        env:
+        - name: CONFIG_FILE
+          valueFrom:
+            configMapKeyRef:
+              name: missing-config       # PROBLEM 2: ConfigMap doesn't exist
+              key: app.conf
+        
+        resources:
+          requests:
+            memory: "10Gi"              # PROBLEM 3: Excessive resource request
+            cpu: "5"
+          limits:
+            memory: "20Gi"
+            cpu: "10"
+        
+        volumeMounts:
+        - name: secret-vol
+          mountPath: /etc/secrets
+        - name: config-vol
+          mountPath: /etc/config
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9090                  # PROBLEM 4: Wrong port
+          initialDelaySeconds: 1
+          failureThreshold: 1           # PROBLEM 5: Too strict
+      
+      nodeSelector:
+        nonexistent-label: value        # PROBLEM 6: Bad node selector
+      
+      volumes:
+      - name: secret-vol
+        secret:
+          secretName: missing-secret    # PROBLEM 7: Secret doesn't exist
+      - name: config-vol
+        configMap:
+          name: missing-config          # PROBLEM 8: ConfigMap doesn't exist
+
+---
+# Solution guide for the expert challenge
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-challenge-solution
+  annotations:
+    debug.scenario: "expert-challenge"
+    debug.title: "Multiple Issues - Expert Challenge Solution"
+data:
+  problems-identified: |
+    1. Image tag 'nginx:nonexistent-tag' doesn't exist
+    2. ConfigMap 'missing-config' referenced but doesn't exist
+    3. Secret 'missing-secret' referenced but doesn't exist
+    4. Resource requests too high (10Gi memory, 5 CPU cores)
+    5. Health check uses wrong port (9090 instead of 80)
+    6. Health check too strict (failureThreshold: 1)
+    7. Node selector references non-existent label
+    8. Multiple volume mount failures
+  
+  investigation-approach: |
+    1. Check deployment status: kubectl get deployment debug-challenge-deployment
+    2. Check pod status: kubectl get pods -l app=debug-challenge
+    3. Investigate each failing pod: kubectl describe pod <pod-name>
+    4. Check for missing resources: kubectl get configmap,secret
+    5. Check node labels: kubectl get nodes --show-labels
+    6. Check resource availability: kubectl top nodes
+  
+  solution-steps: |
+    # Step 1: Fix the image tag
+    kubectl patch deployment debug-challenge-deployment -p '{"spec":{"template":{"spec":{"containers":[{"name":"problematic-app","image":"nginx:1.21"}]}}}}'
+    
+    # Step 2: Create missing ConfigMap
+    kubectl create configmap missing-config --from-literal=app.conf="server_name=localhost;"
+    
+    # Step 3: Create missing Secret
+    kubectl create secret generic missing-secret --from-literal=password=secret123
+    
+    # Step 4: Fix resource requests
+    kubectl patch deployment debug-challenge-deployment -p '{"spec":{"template":{"spec":{"containers":[{"name":"problematic-app","resources":{"requests":{"memory":"128Mi","cpu":"100m"},"limits":{"memory":"256Mi","cpu":"200m"}}}]}}}}'
+    
+    # Step 5: Fix health check
+    kubectl patch deployment debug-challenge-deployment -p '{"spec":{"template":{"spec":{"containers":[{"name":"problematic-app","readinessProbe":{"httpGet":{"port":80},"failureThreshold":3}}]}}}}'
+    
+    # Step 6: Remove bad node selector
+    kubectl patch deployment debug-challenge-deployment -p '{"spec":{"template":{"spec":{"nodeSelector":null}}}}'

@@ -1,0 +1,750 @@
+# Recreate Deployment Strategy Demo
+# This file demonstrates the Recreate deployment strategy and its use cases
+
+# =============================================================================
+# SECTION 1: Basic Recreate Strategy Deployment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recreate-demo
+  labels:
+    app: recreate-demo
+    strategy: recreate
+  annotations:
+    description: "Demonstrates recreate deployment strategy with downtime"
+    use-case: "Applications that cannot run multiple versions simultaneously"
+spec:
+  replicas: 3
+  
+  # Recreate strategy - terminates all old pods before creating new ones
+  strategy:
+    type: Recreate                      # All old pods terminated before new ones created
+  
+  selector:
+    matchLabels:
+      app: recreate-demo
+  
+  template:
+    metadata:
+      labels:
+        app: recreate-demo
+        version: v1
+        strategy: recreate
+      annotations:
+        deployment.timestamp: "2023-10-15T10:00:00Z"
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21               # Initial version
+        ports:
+        - containerPort: 80
+          name: http
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        # Health checks
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        
+        # Graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - |
+                echo "Recreate strategy: Shutting down for complete replacement"
+                nginx -s quit
+                sleep 5
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      terminationGracePeriodSeconds: 30
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: recreate-demo-html
+      - name: nginx-config
+        configMap:
+          name: recreate-demo-nginx-config
+
+---
+# Service for the recreate demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: recreate-demo-service
+  labels:
+    app: recreate-demo
+spec:
+  selector:
+    app: recreate-demo
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+
+---
+# Nginx configuration for health checks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recreate-demo-nginx-config
+  labels:
+    app: recreate-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Status endpoint
+        location /status {
+            access_log off;
+            return 200 "recreate strategy active\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Main content
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+# HTML content explaining recreate strategy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recreate-demo-html
+  labels:
+    app: recreate-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Recreate Strategy Demo</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .warning { 
+                background: rgba(255,165,0,0.3); 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 15px 0;
+                border-left: 4px solid #ffa500;
+            }
+            .code { 
+                background: rgba(0,0,0,0.3); 
+                padding: 10px; 
+                border-radius: 5px; 
+                font-family: monospace;
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔄 Recreate Deployment Strategy</h1>
+            <div class="warning">
+                <h3>⚠️ Downtime Warning</h3>
+                <p>This deployment strategy causes downtime during updates!</p>
+            </div>
+            
+            <h2>Version 1.0 - Current</h2>
+            
+            <h3>How Recreate Strategy Works:</h3>
+            <ol>
+                <li><strong>Terminate All:</strong> All existing pods are terminated first</li>
+                <li><strong>Wait for Shutdown:</strong> System waits for all pods to stop</li>
+                <li><strong>Create New:</strong> New pods with updated version are created</li>
+                <li><strong>Service Unavailable:</strong> Application is down during this process</li>
+            </ol>
+            
+            <h3>When to Use Recreate Strategy:</h3>
+            <ul>
+                <li>🚫 Applications that cannot run multiple versions simultaneously</li>
+                <li>💾 Stateful applications with database migrations</li>
+                <li>🔒 Applications with exclusive resource access</li>
+                <li>🏭 Legacy applications without graceful handling</li>
+                <li>📊 Batch processing applications</li>
+            </ul>
+            
+            <h3>Trigger Update:</h3>
+            <div class="code">
+                # Update image version (causes recreate)<br>
+                kubectl set image deployment/recreate-demo web-app=nginx:1.22<br><br>
+                
+                # Watch the recreation process<br>
+                kubectl get pods -l app=recreate-demo -w<br><br>
+                
+                # Check rollout status<br>
+                kubectl rollout status deployment/recreate-demo
+            </div>
+            
+            <h3>Pros and Cons:</h3>
+            <div style="display: flex; gap: 20px;">
+                <div style="flex: 1; background: rgba(0,255,0,0.1); padding: 15px; border-radius: 5px;">
+                    <h4>✅ Pros:</h4>
+                    <ul>
+                        <li>Simple and predictable</li>
+                        <li>Clean state between versions</li>
+                        <li>No resource competition</li>
+                        <li>Easier troubleshooting</li>
+                    </ul>
+                </div>
+                <div style="flex: 1; background: rgba(255,0,0,0.1); padding: 15px; border-radius: 5px;">
+                    <h4>❌ Cons:</h4>
+                    <ul>
+                        <li>Service downtime</li>
+                        <li>Not suitable for production</li>
+                        <li>Lost connections</li>
+                        <li>Slower deployment</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <p><strong>Pod Info:</strong> <span id="hostname"></span> | <strong>Load Time:</strong> <span id="loadtime"></span></p>
+            
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+                document.getElementById('loadtime').textContent = new Date().toISOString();
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 2: Database Migration Example (Recreate Use Case)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-app-recreate
+  labels:
+    app: database-app
+    strategy: recreate
+    component: database-dependent
+  annotations:
+    description: "Application requiring database migration - uses recreate strategy"
+spec:
+  replicas: 2
+  
+  strategy:
+    type: Recreate                      # Required for database migrations
+  
+  selector:
+    matchLabels:
+      app: database-app
+  
+  template:
+    metadata:
+      labels:
+        app: database-app
+        version: v1
+        migration-required: "true"
+    
+    spec:
+      # Init container for database migration
+      initContainers:
+      - name: db-migration
+        image: busybox:1.35
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "=== Database Migration Process ==="
+          echo "This init container simulates database schema migration"
+          echo "In real scenarios, this would:"
+          echo "1. Connect to database"
+          echo "2. Run schema migrations"
+          echo "3. Ensure data compatibility"
+          echo "4. Update application configuration"
+          
+          echo "Starting migration simulation..."
+          sleep 10                      # Simulate migration time
+          
+          echo "Migration completed successfully!"
+          echo "Database schema version: v1.2.0"
+          echo "Application can now start with new schema"
+        
+        env:
+        - name: DB_HOST
+          value: "postgres-service"
+        - name: DB_PORT
+          value: "5432"
+        - name: MIGRATION_VERSION
+          value: "v1.2.0"
+      
+      containers:
+      - name: database-app
+        image: nginx:1.21                # Using nginx as placeholder for database app
+        ports:
+        - containerPort: 80
+        
+        # Environment variables showing database dependency
+        env:
+        - name: DATABASE_SCHEMA_VERSION
+          value: "v1.2.0"
+        - name: MIGRATION_STRATEGY
+          value: "recreate-required"
+        - name: APP_VERSION
+          value: "1.0"
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        # Health checks that verify database connectivity
+        readinessProbe:
+          exec:
+            command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              # Simulate database connectivity check
+              echo "Checking database connectivity..."
+              # In real scenario: pg_isready -h $DB_HOST -p $DB_PORT
+              exit 0
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        volumeMounts:
+        - name: app-config
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      volumes:
+      - name: app-config
+        configMap:
+          name: database-app-html
+      - name: nginx-config
+        configMap:
+          name: database-app-nginx-config
+
+---
+# Configuration for database app
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-app-nginx-config
+  labels:
+    app: database-app
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /health {
+            access_log off;
+            return 200 "healthy - db connected\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /db-status {
+            access_log off;
+            return 200 "database schema v1.2.0 - migration completed\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-app-html
+  labels:
+    app: database-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Database-Dependent App - Recreate Strategy</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #9c27b0 0%, #673ab7 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .migration-info { 
+                background: rgba(76,175,80,0.3); 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 15px 0;
+                border-left: 4px solid #4caf50;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🗄️ Database-Dependent Application</h1>
+            <h2>Recreate Strategy for Database Migrations</h2>
+            
+            <div class="migration-info">
+                <h3>✅ Migration Status</h3>
+                <p><strong>Database Schema:</strong> v1.2.0</p>
+                <p><strong>Migration Status:</strong> Completed</p>
+                <p><strong>Application Version:</strong> 1.0</p>
+            </div>
+            
+            <h3>Why Recreate Strategy is Required:</h3>
+            <ul>
+                <li>🔄 <strong>Schema Changes:</strong> Database schema incompatible between versions</li>
+                <li>🔒 <strong>Exclusive Access:</strong> Migration requires exclusive database access</li>
+                <li>📊 <strong>Data Integrity:</strong> Ensures consistent data state</li>
+                <li>🚫 <strong>Version Conflicts:</strong> Old and new versions cannot coexist</li>
+            </ul>
+            
+            <h3>Deployment Process:</h3>
+            <ol>
+                <li><strong>Terminate Current:</strong> Stop all running application instances</li>
+                <li><strong>Run Migration:</strong> Init container executes database migration</li>
+                <li><strong>Start New Version:</strong> Application starts with new schema</li>
+                <li><strong>Verify Health:</strong> Confirm database connectivity and schema</li>
+            </ol>
+            
+            <h3>Example Use Cases:</h3>
+            <ul>
+                <li>🏦 Banking applications with schema changes</li>
+                <li>📊 Data warehouses with ETL processes</li>
+                <li>🔧 Legacy applications without migration support</li>
+                <li>🎮 Game servers with world state changes</li>
+            </ul>
+            
+            <h3>Update Commands:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # Update with new migration<br>
+                kubectl set image deployment/database-app-recreate database-app=myapp:v2<br><br>
+                
+                # Monitor recreation process<br>
+                kubectl get pods -l app=database-app -w<br><br>
+                
+                # Check migration logs<br>
+                kubectl logs -l app=database-app -c db-migration
+            </div>
+            
+            <p><strong>Started:</strong> <span id="timestamp"></span></p>
+            <script>
+                document.getElementById('timestamp').textContent = new Date().toISOString();
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 3: StatefulSet with Recreate-like Behavior
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stateful-recreate-demo
+  labels:
+    app: stateful-app
+    strategy: ordered-recreation
+  annotations:
+    description: "StatefulSet demonstrating ordered recreation pattern"
+spec:
+  serviceName: stateful-service
+  replicas: 3
+  
+  # Ordered update strategy (similar to recreate but ordered)
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1               # Only one pod updated at a time (ordered)
+  
+  selector:
+    matchLabels:
+      app: stateful-app
+  
+  template:
+    metadata:
+      labels:
+        app: stateful-app
+        component: stateful-worker
+    
+    spec:
+      containers:
+      - name: stateful-worker
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+          name: http
+        
+        # Simulate stateful behavior
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: STATEFUL_VERSION
+          value: "v1"
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        # Graceful shutdown for stateful applications
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - |
+                echo "Stateful shutdown: Saving state for $POD_NAME"
+                # Simulate state saving
+                sleep 10
+                echo "State saved, shutting down gracefully"
+        
+        volumeMounts:
+        - name: stateful-storage
+          mountPath: /data
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      terminationGracePeriodSeconds: 60    # Longer grace period for state saving
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: stateful-demo-html
+      - name: nginx-config
+        configMap:
+          name: stateful-demo-nginx-config
+  
+  # Persistent storage for each pod
+  volumeClaimTemplates:
+  - metadata:
+      name: stateful-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+# Headless service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateful-service
+  labels:
+    app: stateful-app
+spec:
+  clusterIP: None                       # Headless service
+  selector:
+    app: stateful-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Nginx config for stateful demo
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stateful-demo-nginx-config
+  labels:
+    app: stateful-app
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /health {
+            access_log off;
+            return 200 "stateful pod healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /state {
+            access_log off;
+            return 200 "pod state: active\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stateful-demo-html
+  labels:
+    app: stateful-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>StatefulSet Ordered Recreation</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #607d8b 0%, #455a64 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .stateful-info { 
+                background: rgba(33,150,243,0.3); 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 15px 0;
+                border-left: 4px solid #2196f3;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 StatefulSet Ordered Recreation</h1>
+            <h2>Stateful Application Deployment Pattern</h2>
+            
+            <div class="stateful-info">
+                <h3>🔢 Ordered Update Process</h3>
+                <p>StatefulSets update pods in reverse order (highest to lowest ordinal)</p>
+                <p><strong>Update Order:</strong> pod-2 → pod-1 → pod-0</p>
+            </div>
+            
+            <h3>StatefulSet vs Recreate Comparison:</h3>
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <tr style="background: rgba(255,255,255,0.1);">
+                    <th style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Aspect</th>
+                    <th style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Recreate</th>
+                    <th style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">StatefulSet</th>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Order</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Unordered</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Ordered</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Downtime</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Complete</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Partial</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Storage</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Ephemeral</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Persistent</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Identity</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Random</td>
+                    <td style="padding: 10px; border: 1px solid rgba(255,255,255,0.3);">Stable</td>
+                </tr>
+            </table>
+            
+            <h3>Update Commands:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # Update StatefulSet image<br>
+                kubectl set image statefulset/stateful-recreate-demo stateful-worker=nginx:1.22<br><br>
+                
+                # Watch ordered update process<br>
+                kubectl get pods -l app=stateful-app -w<br><br>
+                
+                # Check persistent volumes<br>
+                kubectl get pvc -l app=stateful-app
+            </div>
+            
+            <p><strong>Pod Identity:</strong> <span id="hostname"></span></p>
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+            </script>
+        </div>
+    </body>
+    </html>

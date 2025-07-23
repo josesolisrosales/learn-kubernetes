@@ -1,0 +1,848 @@
+# Rollback Practice - Comprehensive Guide to Kubernetes Rollbacks
+# This file demonstrates various rollback scenarios and best practices
+
+# =============================================================================
+# SECTION 1: Basic Rollback Demonstration
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-demo
+  labels:
+    app: rollback-demo
+    exercise: rollback-practice
+  annotations:
+    description: "Deployment for practicing rollback scenarios"
+    deployment.kubernetes.io/revision: "1"
+spec:
+  replicas: 4
+  
+  # Rolling update strategy for smooth rollbacks
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  
+  # Keep more history for rollback practice
+  revisionHistoryLimit: 10              # Keep 10 old ReplicaSets
+  
+  selector:
+    matchLabels:
+      app: rollback-demo
+  
+  template:
+    metadata:
+      labels:
+        app: rollback-demo
+        version: v1.0
+      annotations:
+        build.version: "1.0.0"
+        git.commit: "abc123"
+        deployment.timestamp: "2023-10-15T10:00:00Z"
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21                # Version 1 - stable
+        ports:
+        - containerPort: 80
+          name: http
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        # Health checks for rollback safety
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: rollback-demo-html-v1
+      - name: nginx-config
+        configMap:
+          name: rollback-demo-nginx-config
+
+---
+# Service for rollback testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollback-demo-service
+  labels:
+    app: rollback-demo
+spec:
+  selector:
+    app: rollback-demo
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+
+---
+# Nginx configuration with health checks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollback-demo-nginx-config
+  labels:
+    app: rollback-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+            add_header X-Version $http_x_version;
+        }
+        
+        # Version endpoint
+        location /version {
+            access_log off;
+            return 200 "version info available\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Simulate error endpoint for rollback testing
+        location /error {
+            return 500 "Simulated error for rollback testing\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Load test endpoint
+        location /load {
+            return 200 "Load test endpoint\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Main content
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+# Version 1 HTML content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollback-demo-html-v1
+  labels:
+    app: rollback-demo
+    version: v1
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Rollback Demo - Version 1.0</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .version-badge { 
+                background: #2e7d32; 
+                padding: 10px 20px; 
+                border-radius: 20px; 
+                display: inline-block; 
+                margin: 10px 0;
+            }
+            .commands { 
+                background: rgba(0,0,0,0.3); 
+                padding: 15px; 
+                border-radius: 5px; 
+                font-family: monospace;
+                margin: 15px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔄 Rollback Practice Demo</h1>
+            <div class="version-badge">Version 1.0 - Stable Release</div>
+            
+            <h3>✅ Current Status: Stable</h3>
+            <p>This is the stable version 1.0 of the application. It's working correctly and ready for production use.</p>
+            
+            <h3>🚀 Rollback Practice Steps:</h3>
+            
+            <h4>Step 1: Deploy a "Broken" Version</h4>
+            <div class="commands">
+                # Deploy version 2 (simulated broken version)<br>
+                kubectl apply -f rollback-practice-v2.yaml<br><br>
+                
+                # Or update image directly<br>
+                kubectl set image deployment/rollback-demo web-app=nginx:1.22<br>
+                kubectl patch configmap rollback-demo-html-v1 --patch '{"data":{"index.html":"&lt;html&gt;&lt;body&gt;&lt;h1&gt;Version 2.0 - BROKEN&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;"}}'
+            </div>
+            
+            <h4>Step 2: Monitor Deployment</h4>
+            <div class="commands">
+                # Watch rollout status<br>
+                kubectl rollout status deployment/rollback-demo<br><br>
+                
+                # Monitor pods<br>
+                kubectl get pods -l app=rollback-demo -w<br><br>
+                
+                # Check readiness<br>
+                kubectl get pods -l app=rollback-demo -o wide
+            </div>
+            
+            <h4>Step 3: Verify Issues</h4>
+            <div class="commands">
+                # Test application<br>
+                kubectl port-forward service/rollback-demo-service 8080:80<br>
+                curl http://localhost:8080/health<br><br>
+                
+                # Check logs for errors<br>
+                kubectl logs -l app=rollback-demo --tail=50
+            </div>
+            
+            <h4>Step 4: Perform Rollback</h4>
+            <div class="commands">
+                # View rollout history<br>
+                kubectl rollout history deployment/rollback-demo<br><br>
+                
+                # Rollback to previous version<br>
+                kubectl rollout undo deployment/rollback-demo<br><br>
+                
+                # Rollback to specific revision<br>
+                kubectl rollout undo deployment/rollback-demo --to-revision=1<br><br>
+                
+                # Monitor rollback<br>
+                kubectl rollout status deployment/rollback-demo
+            </div>
+            
+            <h3>📊 Test Endpoints:</h3>
+            <ul>
+                <li><a href="/health" target="_blank">Health Check</a></li>
+                <li><a href="/version" target="_blank">Version Info</a></li>
+                <li><a href="/error" target="_blank">Error Simulation</a></li>
+                <li><a href="/load" target="_blank">Load Test</a></li>
+            </ul>
+            
+            <h3>🔍 Monitoring Commands:</h3>
+            <div class="commands">
+                # Watch deployment changes<br>
+                kubectl get deployment rollback-demo -w<br><br>
+                
+                # Monitor ReplicaSets<br>
+                kubectl get rs -l app=rollback-demo<br><br>
+                
+                # Check events<br>
+                kubectl get events --sort-by=.metadata.creationTimestamp
+            </div>
+            
+            <p><strong>Pod:</strong> <span id="hostname"></span> | <strong>Load Time:</strong> <span id="timestamp"></span></p>
+            
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+                document.getElementById('timestamp').textContent = new Date().toISOString();
+                
+                // Auto-refresh every 30 seconds to show changes
+                setTimeout(() => location.reload(), 30000);
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 2: Problematic Version for Rollback Testing
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollback-demo-html-v2
+  labels:
+    app: rollback-demo
+    version: v2
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Rollback Demo - Version 2.0 BROKEN</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .error-badge { 
+                background: #d32f2f; 
+                padding: 10px 20px; 
+                border-radius: 20px; 
+                display: inline-block; 
+                margin: 10px 0;
+                animation: blink 1s infinite;
+            }
+            @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.5; } }
+        </style>
+        <script>
+            // Simulate JavaScript errors
+            setTimeout(() => {
+                throw new Error("Simulated JavaScript error in version 2.0");
+            }, 2000);
+            
+            // Simulate performance issues
+            const start = Date.now();
+            while (Date.now() - start < 1000) {
+                // Busy wait to simulate performance problems
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>💥 Version 2.0 - BROKEN RELEASE</h1>
+            <div class="error-badge">⚠️ CRITICAL ISSUES DETECTED</div>
+            
+            <h3>❌ Known Issues in Version 2.0:</h3>
+            <ul>
+                <li>🐛 JavaScript errors causing page crashes</li>
+                <li>🐌 Performance degradation (1s page load delay)</li>
+                <li>💾 Memory leaks in background processes</li>
+                <li>🔌 Database connection issues</li>
+                <li>🚫 Health check failures</li>
+            </ul>
+            
+            <h3>🚨 Immediate Action Required:</h3>
+            <p><strong>ROLLBACK TO VERSION 1.0 IMMEDIATELY!</strong></p>
+            
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # Emergency rollback command<br>
+                kubectl rollout undo deployment/rollback-demo<br><br>
+                
+                # Verify rollback success<br>
+                kubectl rollout status deployment/rollback-demo
+            </div>
+            
+            <h3>📊 Error Simulation:</h3>
+            <p>This page demonstrates various failure scenarios:</p>
+            <ul>
+                <li>Console errors (check browser dev tools)</li>
+                <li>Slow page loading</li>
+                <li>Visual indicators of problems</li>
+                <li>Simulated backend failures</li>
+            </ul>
+            
+            <p><strong>Broken Pod:</strong> <span id="hostname"></span></p>
+            <script>
+                try {
+                    document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+                } catch (e) {
+                    console.error("Error setting hostname:", e);
+                }
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 3: Canary Deployment for Safe Rollouts
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-canary-stable
+  labels:
+    app: rollback-canary
+    track: stable
+  annotations:
+    description: "Stable version for canary deployment pattern"
+spec:
+  replicas: 8                           # Majority traffic
+  
+  selector:
+    matchLabels:
+      app: rollback-canary
+      track: stable
+  
+  template:
+    metadata:
+      labels:
+        app: rollback-canary
+        track: stable
+        version: v1
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: canary-stable-html
+      - name: nginx-config
+        configMap:
+          name: rollback-demo-nginx-config
+
+---
+# Canary deployment (small percentage of traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-canary-test
+  labels:
+    app: rollback-canary
+    track: canary
+  annotations:
+    description: "Canary version for testing new releases"
+spec:
+  replicas: 2                           # Small percentage of traffic
+  
+  selector:
+    matchLabels:
+      app: rollback-canary
+      track: canary
+  
+  template:
+    metadata:
+      labels:
+        app: rollback-canary
+        track: canary
+        version: v2
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.22                # New version
+        ports:
+        - containerPort: 80
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: canary-test-html
+      - name: nginx-config
+        configMap:
+          name: rollback-demo-nginx-config
+
+---
+# Service that routes to both stable and canary
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollback-canary-service
+  labels:
+    app: rollback-canary
+  annotations:
+    description: "Service routing to both stable and canary deployments"
+spec:
+  selector:
+    app: rollback-canary                # Selects both stable and canary pods
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# HTML for stable canary version
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-stable-html
+  labels:
+    app: rollback-canary
+    track: stable
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Canary Deployment - Stable Track</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #2196f3 0%, #1565c0 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .track-badge { 
+                background: #1565c0; 
+                padding: 10px 20px; 
+                border-radius: 20px; 
+                display: inline-block; 
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔵 Stable Track - Version 1.0</h1>
+            <div class="track-badge">Stable Deployment (80% Traffic)</div>
+            
+            <h3>Canary Deployment Strategy:</h3>
+            <p>This deployment serves the majority of production traffic with the proven stable version.</p>
+            
+            <h3>Traffic Distribution:</h3>
+            <ul>
+                <li><strong>Stable:</strong> 8 replicas (~80% traffic)</li>
+                <li><strong>Canary:</strong> 2 replicas (~20% traffic)</li>
+            </ul>
+            
+            <h3>Rollback Commands:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # If canary fails, scale it down immediately<br>
+                kubectl scale deployment rollback-canary-test --replicas=0<br><br>
+                
+                # Scale up stable if needed<br>
+                kubectl scale deployment rollback-canary-stable --replicas=10<br><br>
+                
+                # Monitor traffic distribution<br>
+                kubectl get pods -l app=rollback-canary
+            </div>
+            
+            <p><strong>Stable Pod:</strong> <span id="hostname"></span></p>
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# HTML for canary version
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-test-html
+  labels:
+    app: rollback-canary
+    track: canary
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Canary Deployment - Test Track</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+            .track-badge { 
+                background: #f57c00; 
+                padding: 10px 20px; 
+                border-radius: 20px; 
+                display: inline-block; 
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🟠 Canary Track - Version 2.0</h1>
+            <div class="track-badge">Canary Deployment (20% Traffic)</div>
+            
+            <h3>New Features in Version 2.0:</h3>
+            <ul>
+                <li>✨ Updated nginx to 1.22</li>
+                <li>🚀 Performance improvements</li>
+                <li>🔒 Security enhancements</li>
+                <li>📊 Better error handling</li>
+            </ul>
+            
+            <h3>Canary Monitoring:</h3>
+            <p>Monitor key metrics to decide on full rollout or rollback:</p>
+            <ul>
+                <li>Error rates (should be similar to stable)</li>
+                <li>Response times (should not degrade)</li>
+                <li>Resource usage (memory, CPU)</li>
+                <li>User feedback and complaints</li>
+            </ul>
+            
+            <h3>Promotion Commands:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # If canary is successful, promote it<br>
+                kubectl set image deployment/rollback-canary-stable web-app=nginx:1.22<br><br>
+                
+                # Scale down canary after promotion<br>
+                kubectl scale deployment rollback-canary-test --replicas=0<br><br>
+                
+                # Monitor promotion<br>
+                kubectl rollout status deployment/rollback-canary-stable
+            </div>
+            
+            <h3>Rollback Commands:</h3>
+            <div style="background: rgba(255,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # If issues detected, rollback canary immediately<br>
+                kubectl scale deployment rollback-canary-test --replicas=0<br><br>
+                
+                # Ensure stable is handling all traffic<br>
+                kubectl get pods -l app=rollback-canary,track=stable
+            </div>
+            
+            <p><strong>Canary Pod:</strong> <span id="hostname"></span></p>
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+            </script>
+        </div>
+    </body>
+    </html>
+
+---
+# =============================================================================
+# SECTION 4: Automated Rollback with Readiness Probe Failures
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-rollback-demo
+  labels:
+    app: auto-rollback-demo
+    rollback: automated
+  annotations:
+    description: "Demonstrates automatic rollback via failed readiness probes"
+spec:
+  replicas: 3
+  
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  
+  # Important: Set a progress deadline to trigger automatic rollback
+  progressDeadlineSeconds: 120          # Rollback if deployment doesn't progress in 2 minutes
+  
+  selector:
+    matchLabels:
+      app: auto-rollback-demo
+  
+  template:
+    metadata:
+      labels:
+        app: auto-rollback-demo
+        version: v1
+    
+    spec:
+      containers:
+      - name: web-app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        env:
+        - name: HEALTH_CHECK_ENABLED
+          value: "true"                 # Can be set to "false" to simulate failure
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        # Strict readiness probe that will fail if HEALTH_CHECK_ENABLED=false
+        readinessProbe:
+          exec:
+            command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              if [ "$HEALTH_CHECK_ENABLED" = "true" ]; then
+                exit 0
+              else
+                echo "Health check disabled - failing readiness probe"
+                exit 1
+              fi
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 30
+        
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      
+      volumes:
+      - name: html-content
+        configMap:
+          name: auto-rollback-html
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auto-rollback-html
+  labels:
+    app: auto-rollback-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Automated Rollback Demo</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+                color: white;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); 
+                padding: 30px; 
+                border-radius: 10px; 
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Automated Rollback Demo</h1>
+            
+            <h3>How Automated Rollback Works:</h3>
+            <ol>
+                <li><strong>Deploy Update:</strong> New version deployed with rolling update</li>
+                <li><strong>Health Check Failure:</strong> New pods fail readiness probes</li>
+                <li><strong>Progress Deadline:</strong> Deployment doesn't complete within timeout</li>
+                <li><strong>Automatic Rollback:</strong> Kubernetes reverts to previous version</li>
+            </ol>
+            
+            <h3>Trigger Automatic Rollback:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # Deploy version that will fail health checks<br>
+                kubectl patch deployment auto-rollback-demo -p \<br>
+                '{"spec":{"template":{"spec":{"containers":[{"name":"web-app","env":[{"name":"HEALTH_CHECK_ENABLED","value":"false"}]}]}}}}'<br><br>
+                
+                # Watch the rollback happen automatically<br>
+                kubectl rollout status deployment/auto-rollback-demo --timeout=300s<br><br>
+                
+                # Check deployment status<br>
+                kubectl describe deployment auto-rollback-demo
+            </div>
+            
+            <h3>Monitor Rollback Process:</h3>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; font-family: monospace;">
+                # Watch pods during rollback<br>
+                kubectl get pods -l app=auto-rollback-demo -w<br><br>
+                
+                # Check ReplicaSets<br>
+                kubectl get rs -l app=auto-rollback-demo<br><br>
+                
+                # View rollback events<br>
+                kubectl get events --field-selector involvedObject.name=auto-rollback-demo
+            </div>
+            
+            <p><strong>Current Status:</strong> Healthy and Running</p>
+            <p><strong>Pod:</strong> <span id="hostname"></span></p>
+            
+            <script>
+                document.getElementById('hostname').textContent = window.location.hostname || 'Unknown';
+            </script>
+        </div>
+    </body>
+    </html>

@@ -1,0 +1,907 @@
+# Ambassador Pattern - Advanced Container Pattern Implementation
+# This demonstrates the Ambassador pattern for proxying external service connections
+
+# =============================================================================
+# SECTION 1: Ambassador Pattern with Redis Proxy
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ambassador-redis-demo
+  labels:
+    app: ambassador-demo
+    pattern: ambassador
+    component: redis-client
+  annotations:
+    description: "Ambassador pattern demo with Redis proxy"
+    pattern.type: "ambassador"
+    use-case: "Proxy connections to external Redis service"
+spec:
+  containers:
+  
+  # Main application container
+  - name: redis-client-app
+    image: redis:7-alpine
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Redis client application starting..."
+      echo "Connecting to Redis via ambassador at localhost:6379"
+      
+      # Wait for ambassador to be ready
+      until nc -z localhost 6379; do
+        echo "Waiting for Redis ambassador..."
+        sleep 2
+      done
+      
+      echo "Ambassador ready! Starting Redis operations..."
+      
+      # Simulate Redis operations through ambassador
+      while true; do
+        echo "Setting key: app_status = running at $(date)"
+        redis-cli -h localhost -p 6379 SET app_status "running-$(date +%s)" || echo "Redis operation failed"
+        
+        echo "Getting key: app_status"
+        redis-cli -h localhost -p 6379 GET app_status || echo "Redis get failed"
+        
+        echo "Incrementing counter"
+        redis-cli -h localhost -p 6379 INCR operation_count || echo "Redis incr failed"
+        
+        sleep 30
+      done
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    # Health check for the main application
+    readinessProbe:
+      exec:
+        command:
+        - "redis-cli"
+        - "-h"
+        - "localhost"
+        - "-p"
+        - "6379"
+        - "ping"
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    
+    livenessProbe:
+      exec:
+        command:
+        - "pgrep"
+        - "redis-cli"
+      initialDelaySeconds: 15
+      periodSeconds: 30
+  
+  # Ambassador container (proxy to external Redis)
+  - name: redis-ambassador
+    image: redis:7-alpine
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Redis Ambassador starting..."
+      echo "Proxying connections from localhost:6379 to $REDIS_HOST:$REDIS_PORT"
+      
+      # Start Redis in proxy mode using socat
+      apk add --no-cache socat
+      
+      # Create proxy configuration
+      echo "Starting proxy: localhost:6379 -> $REDIS_HOST:$REDIS_PORT"
+      
+      # Use socat to proxy connections
+      exec socat TCP-LISTEN:6379,fork,reuseaddr TCP:$REDIS_HOST:$REDIS_PORT
+    
+    env:
+    - name: REDIS_HOST
+      value: "redis-external-service"   # External Redis service
+    - name: REDIS_PORT
+      value: "6379"
+    
+    ports:
+    - containerPort: 6379
+      name: redis-proxy
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    # Health check for the ambassador
+    readinessProbe:
+      tcpSocket:
+        port: 6379
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    
+    livenessProbe:
+      tcpSocket:
+        port: 6379
+      initialDelaySeconds: 10
+      periodSeconds: 15
+  
+  # Monitoring sidecar
+  - name: connection-monitor
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Connection monitor starting..."
+      
+      while true; do
+        echo "=== Connection Monitor Report $(date) ==="
+        echo "Checking localhost:6379 availability..."
+        
+        if nc -z localhost 6379; then
+          echo "✅ Ambassador proxy is accessible"
+        else
+          echo "❌ Ambassador proxy is not accessible"
+        fi
+        
+        echo "Network connections:"
+        netstat -tlnp 2>/dev/null | grep :6379 || echo "No Redis connections found"
+        
+        echo "Process status:"
+        ps aux | grep -E "(redis|socat)" | grep -v grep || echo "No Redis/socat processes"
+        
+        sleep 60
+      done
+    
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+
+---
+# External Redis service (simulated)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-external-service
+  labels:
+    app: external-redis
+  annotations:
+    description: "Simulated external Redis service"
+spec:
+  selector:
+    app: external-redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  type: ClusterIP
+
+---
+# External Redis deployment (for demonstration)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-redis
+  labels:
+    app: external-redis
+  annotations:
+    description: "External Redis instance for ambassador demo"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-redis
+  
+  template:
+    metadata:
+      labels:
+        app: external-redis
+    
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        readinessProbe:
+          exec:
+            command:
+            - "redis-cli"
+            - "ping"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# =============================================================================
+# SECTION 2: Ambassador Pattern with HTTP API Proxy
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ambassador-http-demo
+  labels:
+    app: ambassador-demo
+    pattern: ambassador
+    component: http-client
+  annotations:
+    description: "Ambassador pattern with HTTP API proxy"
+    pattern.benefits: "Service discovery, load balancing, circuit breaking"
+spec:
+  containers:
+  
+  # Main application container
+  - name: api-client-app
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "API client application starting..."
+      echo "Using ambassador for API calls at localhost:8080"
+      
+      # Install curl for API calls
+      apk add --no-cache curl
+      
+      # Wait for ambassador
+      until curl -f http://localhost:8080/health 2>/dev/null; do
+        echo "Waiting for API ambassador..."
+        sleep 2
+      done
+      
+      echo "Ambassador ready! Starting API operations..."
+      
+      # Simulate API calls through ambassador
+      while true; do
+        echo "Making API call: GET /users"
+        curl -s http://localhost:8080/api/users || echo "API call failed"
+        
+        echo "Making API call: GET /health"
+        curl -s http://localhost:8080/health || echo "Health check failed"
+        
+        echo "Making API call: POST /metrics"
+        curl -s -X POST http://localhost:8080/metrics || echo "Metrics post failed"
+        
+        sleep 45
+      done
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    readinessProbe:
+      exec:
+        command:
+        - "curl"
+        - "-f"
+        - "http://localhost:8080/health"
+      initialDelaySeconds: 10
+      periodSeconds: 10
+  
+  # Ambassador container (HTTP proxy with additional features)
+  - name: http-ambassador
+    image: nginx:1.21-alpine
+    ports:
+    - containerPort: 8080
+      name: http-proxy
+    
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+    
+    env:
+    - name: UPSTREAM_HOST
+      value: "external-api-service"
+    - name: UPSTREAM_PORT
+      value: "80"
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 15
+  
+  # Circuit breaker and metrics sidecar
+  - name: circuit-breaker
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Circuit breaker monitor starting..."
+      
+      # Simple circuit breaker logic
+      failure_count=0
+      circuit_open=false
+      
+      while true; do
+        echo "=== Circuit Breaker Status $(date) ==="
+        
+        # Check upstream health
+        if nc -z localhost 8080; then
+          if [ "$circuit_open" = true ]; then
+            echo "Circuit breaker: Attempting to close circuit"
+            # Test upstream
+            if nc -z external-api-service 80 2>/dev/null; then
+              echo "✅ Circuit breaker: Closing circuit - upstream healthy"
+              circuit_open=false
+              failure_count=0
+            else
+              echo "⚠️  Circuit breaker: Circuit remains open - upstream unhealthy"
+            fi
+          else
+            echo "✅ Circuit breaker: Circuit closed - normal operation"
+            failure_count=0
+          fi
+        else
+          failure_count=$((failure_count + 1))
+          echo "❌ Failure detected. Count: $failure_count"
+          
+          if [ $failure_count -ge 3 ] && [ "$circuit_open" = false ]; then
+            echo "🚨 Circuit breaker: Opening circuit after $failure_count failures"
+            circuit_open=true
+          fi
+        fi
+        
+        echo "Status: Circuit open=$circuit_open, Failures=$failure_count"
+        sleep 30
+      done
+    
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+  
+  volumes:
+  - name: nginx-config
+    configMap:
+      name: http-ambassador-config
+
+---
+# Nginx configuration for HTTP ambassador
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: http-ambassador-config
+  labels:
+    app: ambassador-demo
+    component: nginx-config
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        upstream backend {
+            server external-api-service:80 max_fails=3 fail_timeout=30s;
+            # Add more backend servers for load balancing
+            # server external-api-service-2:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+        
+        server {
+            listen 8080;
+            server_name localhost;
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "Ambassador healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Metrics endpoint
+            location /metrics {
+                access_log off;
+                return 200 "# Ambassador metrics\nrequests_total 42\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Proxy all other requests to backend
+            location / {
+                # Apply rate limiting
+                limit_req zone=api_limit burst=20 nodelay;
+                
+                # Proxy configuration
+                proxy_pass http://backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # Timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 10s;
+                proxy_read_timeout 10s;
+                
+                # Retry configuration
+                proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+                proxy_next_upstream_tries 3;
+                proxy_next_upstream_timeout 10s;
+                
+                # Add ambassador headers
+                add_header X-Served-By ambassador-proxy;
+                add_header X-Cache-Status $upstream_cache_status;
+            }
+        }
+    }
+
+---
+# External API service (simulated)
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-api-service
+  labels:
+    app: external-api
+  annotations:
+    description: "Simulated external API service"
+spec:
+  selector:
+    app: external-api
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+
+---
+# External API deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-api
+  labels:
+    app: external-api
+  annotations:
+    description: "External API for ambassador demo"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: external-api
+  
+  template:
+    metadata:
+      labels:
+        app: external-api
+    
+    spec:
+      containers:
+      - name: api-server
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 80
+        
+        volumeMounts:
+        - name: api-config
+          mountPath: /etc/nginx/conf.d
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      volumes:
+      - name: api-config
+        configMap:
+          name: external-api-config
+
+---
+# External API configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-api-config
+  labels:
+    app: external-api
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /health {
+            access_log off;
+            return 200 "External API healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /api/users {
+            access_log off;
+            return 200 '[{"id":1,"name":"John"},{"id":2,"name":"Jane"}]\n';
+            add_header Content-Type application/json;
+        }
+        
+        location /metrics {
+            access_log off;
+            return 200 "# External API metrics\napi_requests_total 123\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location / {
+            return 200 "External API - $(date)\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# =============================================================================
+# SECTION 3: Database Ambassador Pattern
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ambassador-database-demo
+  labels:
+    app: ambassador-demo
+    pattern: ambassador
+    component: database-client
+  annotations:
+    description: "Ambassador pattern for database connections with connection pooling"
+    pattern.benefits: "Connection pooling, failover, monitoring"
+spec:
+  containers:
+  
+  # Main application container
+  - name: database-app
+    image: postgres:13-alpine
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Database application starting..."
+      echo "Connecting to database via ambassador at localhost:5432"
+      
+      # Wait for ambassador
+      until pg_isready -h localhost -p 5432; do
+        echo "Waiting for database ambassador..."
+        sleep 2
+      done
+      
+      echo "Ambassador ready! Starting database operations..."
+      
+      # Simulate database operations through ambassador
+      while true; do
+        echo "Database operation: Creating test table"
+        PGPASSWORD=ambassador_pass psql -h localhost -p 5432 -U ambassador_user -d ambassador_db -c "
+          CREATE TABLE IF NOT EXISTS test_data (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP DEFAULT NOW(),
+            data TEXT
+          );" || echo "Table creation failed"
+        
+        echo "Database operation: Inserting data"
+        PGPASSWORD=ambassador_pass psql -h localhost -p 5432 -U ambassador_user -d ambassador_db -c "
+          INSERT INTO test_data (data) VALUES ('Sample data $(date)');" || echo "Insert failed"
+        
+        echo "Database operation: Querying data"
+        PGPASSWORD=ambassador_pass psql -h localhost -p 5432 -U ambassador_user -d ambassador_db -c "
+          SELECT COUNT(*) FROM test_data;" || echo "Query failed"
+        
+        sleep 60
+      done
+    
+    env:
+    - name: PGUSER
+      value: "ambassador_user"
+    - name: PGPASSWORD
+      value: "ambassador_pass"
+    - name: PGDATABASE
+      value: "ambassador_db"
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  
+  # Database ambassador with connection pooling
+  - name: database-ambassador
+    image: pgbouncer/pgbouncer:latest
+    ports:
+    - containerPort: 5432
+      name: postgres
+    
+    env:
+    - name: DATABASES_HOST
+      value: "postgres-external-service"
+    - name: DATABASES_PORT
+      value: "5432" 
+    - name: DATABASES_USER
+      value: "postgres"
+    - name: DATABASES_PASSWORD
+      value: "postgres_pass"
+    - name: DATABASES_DBNAME
+      value: "postgres"
+    - name: POOL_MODE
+      value: "transaction"
+    - name: MAX_CLIENT_CONN
+      value: "100"
+    - name: DEFAULT_POOL_SIZE
+      value: "20"
+    
+    volumeMounts:
+    - name: pgbouncer-config
+      mountPath: /etc/pgbouncer
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    readinessProbe:
+      tcpSocket:
+        port: 5432
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    
+    livenessProbe:
+      tcpSocket:
+        port: 5432
+      initialDelaySeconds: 10
+      periodSeconds: 15
+  
+  # Connection monitoring sidecar
+  - name: connection-monitor
+    image: postgres:13-alpine
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Database connection monitor starting..."
+      
+      while true; do
+        echo "=== Database Connection Monitor $(date) ==="
+        
+        # Check ambassador connection
+        if pg_isready -h localhost -p 5432; then
+          echo "✅ Ambassador database proxy is accessible"
+          
+          # Get connection stats from pgbouncer
+          echo "Connection pool statistics:"
+          PGPASSWORD=ambassador_pass psql -h localhost -p 5432 -U ambassador_user -d pgbouncer -c "SHOW POOLS;" 2>/dev/null || echo "Could not get pool stats"
+          
+          # Get client connections
+          PGPASSWORD=ambassador_pass psql -h localhost -p 5432 -U ambassador_user -d pgbouncer -c "SHOW CLIENTS;" 2>/dev/null || echo "Could not get client stats"
+          
+        else
+          echo "❌ Ambassador database proxy is not accessible"
+        fi
+        
+        # Check external database directly
+        if pg_isready -h postgres-external-service -p 5432; then
+          echo "✅ External database is accessible"
+        else
+          echo "❌ External database is not accessible"
+        fi
+        
+        sleep 60
+      done
+    
+    env:
+    - name: PGUSER
+      value: "ambassador_user"
+    - name: PGPASSWORD
+      value: "ambassador_pass"
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  volumes:
+  - name: pgbouncer-config
+    configMap:
+      name: pgbouncer-ambassador-config
+
+---
+# PgBouncer configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-ambassador-config
+  labels:
+    app: ambassador-demo
+    component: pgbouncer-config
+data:
+  pgbouncer.ini: |
+    [databases]
+    ambassador_db = host=postgres-external-service port=5432 dbname=postgres user=postgres password=postgres_pass
+    
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 5432
+    auth_type = trust
+    auth_file = /etc/pgbouncer/userlist.txt
+    
+    # Connection pool settings
+    pool_mode = transaction
+    max_client_conn = 100
+    default_pool_size = 20
+    min_pool_size = 5
+    reserve_pool_size = 5
+    reserve_pool_timeout = 3
+    
+    # Timeouts
+    server_connect_timeout = 15
+    server_login_retry = 15
+    query_timeout = 900
+    
+    # Logging
+    log_connections = 1
+    log_disconnections = 1
+    log_pooler_errors = 1
+    
+    # Admin database
+    admin_users = ambassador_user
+    stats_users = ambassador_user
+  
+  userlist.txt: |
+    "ambassador_user" ""
+    "postgres" ""
+
+---
+# External PostgreSQL service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-external-service
+  labels:
+    app: external-postgres
+  annotations:
+    description: "External PostgreSQL service for ambassador demo"
+spec:
+  selector:
+    app: external-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  type: ClusterIP
+
+---
+# External PostgreSQL deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-postgres
+  labels:
+    app: external-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-postgres
+  
+  template:
+    metadata:
+      labels:
+        app: external-postgres
+    
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+        
+        env:
+        - name: POSTGRES_DB
+          value: "postgres"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          value: "postgres_pass"
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        readinessProbe:
+          exec:
+            command:
+            - "pg_isready"
+            - "-U"
+            - "postgres"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      
+      volumes:
+      - name: postgres-data
+        emptyDir: {}
+
+---
+# Service to expose ambassador demos
+apiVersion: v1
+kind: Service
+metadata:
+  name: ambassador-demo-service
+  labels:
+    app: ambassador-demo
+  annotations:
+    description: "Service for accessing ambassador pattern demos"
+spec:
+  selector:
+    app: ambassador-demo
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  type: ClusterIP

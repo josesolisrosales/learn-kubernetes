@@ -1,0 +1,501 @@
+# Metadata Examples - Comprehensive Guide to Kubernetes Metadata
+# This file demonstrates various metadata patterns, labels, and annotations
+
+# =============================================================================
+# SECTION 1: Label Best Practices and Conventions
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: well-labeled-pod
+  namespace: production
+  
+  # Recommended labels following Kubernetes conventions
+  labels:
+    # Application identification
+    app.kubernetes.io/name: web-server           # Name of the application
+    app.kubernetes.io/instance: web-server-prod  # Unique instance name
+    app.kubernetes.io/version: "1.2.3"          # Application version
+    app.kubernetes.io/component: frontend        # Component within the architecture
+    app.kubernetes.io/part-of: ecommerce-platform # Larger application this is part of
+    app.kubernetes.io/managed-by: helm           # Tool managing this resource
+    
+    # Environment and deployment information
+    environment: production                       # Environment (dev, staging, prod)
+    tier: frontend                               # Application tier
+    release: stable                              # Release channel
+    
+    # Team and ownership
+    team: platform-team                          # Owning team
+    cost-center: engineering                     # Cost allocation
+    
+    # Custom application labels
+    feature-flags: "advanced-checkout,new-ui"   # Feature flags enabled
+    region: us-west-2                           # Geographic region
+    
+  # Comprehensive annotations for metadata
+  annotations:
+    # Deployment information
+    deployment.kubernetes.io/revision: "3"
+    deployment.kubernetes.io/created-by: "kubectl-v1.28"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Pod"...}
+    
+    # Contact and documentation
+    contact: "platform-team@company.com"
+    documentation: "https://docs.company.com/web-server"
+    runbook: "https://runbooks.company.com/web-server"
+    oncall: "https://oncall.company.com/platform-team"
+    
+    # Build and source information
+    build.timestamp: "2023-10-15T14:30:00Z"
+    build.number: "456"
+    git.commit: "abc123def456"
+    git.branch: "main"
+    git.repository: "https://github.com/company/web-server"
+    
+    # Monitoring and alerting
+    monitoring.enabled: "true"
+    alerts.email: "alerts@company.com"
+    metrics.port: "9090"
+    log.level: "info"
+    
+    # Security and compliance
+    security.scan.date: "2023-10-15"
+    security.scan.status: "passed"
+    compliance.sox: "true"
+    compliance.gdpr: "true"
+    
+    # Operational metadata
+    backup.enabled: "true"
+    backup.schedule: "0 2 * * *"
+    maintenance.window: "Sunday 02:00-04:00 UTC"
+    sla.uptime: "99.9%"
+    
+    # Change management
+    change.ticket: "CHG-123456"
+    change.approved-by: "john.doe@company.com"
+    change.scheduled: "2023-10-15T18:00:00Z"
+    
+    # Custom business metadata
+    customer-impact: "high"
+    revenue-impact: "critical"
+    data-classification: "confidential"
+
+spec:
+  containers:
+  - name: web-server
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+---
+# =============================================================================
+# SECTION 2: Multi-Environment Label Strategy
+# =============================================================================
+
+# Development environment pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-dev
+  labels:
+    app: myapp
+    environment: development
+    tier: backend
+    version: "1.0.0-alpha"
+    team: backend-team
+    release-track: unstable
+  annotations:
+    environment.config: "development-specific settings"
+    debug.enabled: "true"
+    log.level: "debug"
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0-alpha
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+
+---
+# Staging environment pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-staging
+  labels:
+    app: myapp
+    environment: staging
+    tier: backend
+    version: "1.0.0-beta"
+    team: backend-team
+    release-track: beta
+  annotations:
+    environment.config: "staging-specific settings"
+    debug.enabled: "false"
+    log.level: "info"
+    performance.testing: "enabled"
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0-beta
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# Production environment pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-prod
+  labels:
+    app: myapp
+    environment: production
+    tier: backend
+    version: "1.0.0"
+    team: backend-team
+    release-track: stable
+  annotations:
+    environment.config: "production-specific settings"
+    debug.enabled: "false"
+    log.level: "warn"
+    monitoring.enabled: "true"
+    alerts.enabled: "true"
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "400m"
+
+---
+# =============================================================================
+# SECTION 3: Microservices Architecture Labels
+# =============================================================================
+
+# Frontend service
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-service
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: ecommerce-platform
+    app.kubernetes.io/component: ui
+    tier: frontend
+    layer: presentation
+    service.type: web
+    service.protocol: http
+    service.public: "true"
+  annotations:
+    service.description: "User-facing web interface"
+    service.dependencies: "api-gateway,auth-service"
+    service.health-check: "/health"
+    service.metrics: "/metrics"
+spec:
+  containers:
+  - name: frontend
+    image: frontend:latest
+    ports:
+    - containerPort: 3000
+
+---
+# API Gateway service
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: ecommerce-platform
+    app.kubernetes.io/component: gateway
+    tier: middleware
+    layer: api
+    service.type: gateway
+    service.protocol: http
+    service.public: "true"
+  annotations:
+    service.description: "API routing and authentication"
+    service.dependencies: "auth-service,user-service,product-service"
+    service.upstream-services: "user-service:8001,product-service:8002,order-service:8003"
+spec:
+  containers:
+  - name: gateway
+    image: api-gateway:latest
+    ports:
+    - containerPort: 8080
+
+---
+# Backend microservice
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-service
+  labels:
+    app.kubernetes.io/name: user-service
+    app.kubernetes.io/part-of: ecommerce-platform
+    app.kubernetes.io/component: microservice
+    tier: backend
+    layer: business-logic
+    service.type: api
+    service.protocol: grpc
+    service.public: "false"
+    domain: user-management
+  annotations:
+    service.description: "User management and authentication"
+    service.dependencies: "user-database,redis-cache"
+    service.database: "postgresql"
+    service.cache: "redis"
+spec:
+  containers:
+  - name: user-service
+    image: user-service:latest
+    ports:
+    - containerPort: 8001
+
+---
+# Database pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-database
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: ecommerce-platform
+    app.kubernetes.io/component: database
+    tier: data
+    layer: persistence
+    service.type: database
+    service.protocol: postgresql
+    service.public: "false"
+    database.type: postgresql
+    database.version: "13"
+  annotations:
+    service.description: "User data persistence"
+    database.backup.enabled: "true"
+    database.backup.schedule: "0 2 * * *"
+    database.monitoring.enabled: "true"
+spec:
+  containers:
+  - name: postgresql
+    image: postgres:13
+    ports:
+    - containerPort: 5432
+
+---
+# =============================================================================
+# SECTION 4: Selector Examples and Label Queries
+# =============================================================================
+
+# Service that selects based on app label
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-selector-service
+  annotations:
+    service.selector.description: "Selects all pods with app=myapp label"
+spec:
+  selector:
+    app: myapp  # Selects pods with this label
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# Service that selects based on multiple labels
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-label-selector-service
+  annotations:
+    service.selector.description: "Selects pods with specific app, tier, and environment"
+spec:
+  selector:
+    app: myapp
+    tier: backend
+    environment: production  # All three labels must match
+  ports:
+  - port: 80
+
+---
+# =============================================================================
+# SECTION 5: Annotation Patterns for Different Use Cases
+# =============================================================================
+
+# Pod with monitoring annotations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: monitored-pod
+  labels:
+    app: monitored-app
+  annotations:
+    # Prometheus monitoring
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+    
+    # Grafana dashboard
+    grafana.dashboard.id: "12345"
+    grafana.dashboard.url: "https://grafana.company.com/d/xyz"
+    
+    # Alert configuration
+    alert.cpu.threshold: "80"
+    alert.memory.threshold: "90"
+    alert.notification.slack: "#alerts"
+    alert.notification.email: "oncall@company.com"
+    
+    # SLI/SLO definitions
+    sli.availability.target: "99.9"
+    sli.latency.target: "100ms"
+    sli.error-rate.target: "0.1"
+spec:
+  containers:
+  - name: app
+    image: monitored-app:latest
+    ports:
+    - containerPort: 8080
+    - containerPort: 9090  # Metrics port
+
+---
+# Pod with security annotations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-pod
+  labels:
+    app: secure-app
+  annotations:
+    # Security scanning
+    security.scan.image: "passed"
+    security.scan.vulnerabilities: "none"
+    security.scan.date: "2023-10-15"
+    
+    # Pod Security Standards
+    pod-security.kubernetes.io/enforce: "restricted"
+    pod-security.kubernetes.io/enforce-version: "v1.28"
+    
+    # Network policies
+    network-policy.ingress.allowed: "frontend-pods"
+    network-policy.egress.allowed: "database-pods,external-api"
+    
+    # Service mesh (Istio example)
+    sidecar.istio.io/inject: "true"
+    traffic.sidecar.istio.io/includeInboundPorts: "8080"
+    traffic.sidecar.istio.io/excludeOutboundPorts: "9090"
+spec:
+  containers:
+  - name: app
+    image: secure-app:latest
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+
+---
+# Pod with deployment annotations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deployment-annotated-pod
+  labels:
+    app: deployment-demo
+  annotations:
+    # CI/CD information
+    ci.pipeline.id: "12345"
+    ci.build.number: "456"
+    ci.commit.sha: "abc123def456"
+    ci.branch: "feature/new-deployment"
+    ci.pr.number: "789"
+    
+    # Deployment strategy
+    deployment.strategy: "blue-green"
+    deployment.canary.percentage: "10"
+    deployment.rollback.enabled: "true"
+    
+    # Feature flags
+    feature.flag.new-ui: "true"
+    feature.flag.advanced-analytics: "false"
+    
+    # Configuration checksums (for config change detection)
+    config.checksum.configmap: "sha256:abc123..."
+    config.checksum.secret: "sha256:def456..."
+    
+    # Approval and change management
+    change.approved-by: "jane.doe@company.com"
+    change.ticket: "CHG-789012"
+    deployment.approved: "true"
+    deployment.timestamp: "2023-10-15T18:00:00Z"
+spec:
+  containers:
+  - name: app
+    image: deployment-demo:latest
+
+---
+# =============================================================================
+# SECTION 6: Label and Annotation Validation Examples
+# =============================================================================
+
+# Pod demonstrating label formatting rules
+apiVersion: v1
+kind: Pod
+metadata:
+  name: label-validation-demo
+  labels:
+    # Valid label formats
+    app: "my-app"                           # Basic label
+    version: "1.0.0"                       # Version (quoted to ensure string)
+    environment: "production"               # Environment
+    app.kubernetes.io/name: "web-server"   # Domain-prefixed label
+    example.com/custom-label: "value"       # Custom domain prefix
+    
+    # Labels with special characters (valid)
+    team: "backend-team"                    # Hyphen allowed
+    cost_center: "engineering"              # Underscore allowed
+    region.zone: "us-west-2a"              # Dot in prefix allowed
+    
+    # Note: These would be INVALID (shown as comments)
+    # "123invalid": "value"                 # Cannot start with number
+    # "invalid space": "value"              # Spaces not allowed
+    # "toolongforthemaximumlengthallowedforlabelkeyswhichissixtyThreeCharacters": "value"
+  
+  annotations:
+    # Annotations are more flexible than labels
+    description: "This pod demonstrates label validation rules"
+    config.with.dots: "Dots are allowed in annotation keys"
+    config/with/slashes: "Slashes are allowed in annotation keys"
+    "special-characters!@#": "Special characters allowed in annotation keys"
+    very-long-annotation-key-that-exceeds-normal-label-limits: "Long keys OK in annotations"
+    
+    # Multi-line annotation
+    documentation: |
+      This annotation contains detailed documentation
+      spanning multiple lines with proper formatting
+      and various content types including:
+      - Lists
+      - Code examples
+      - URLs: https://example.com
+      - Email: admin@example.com
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21

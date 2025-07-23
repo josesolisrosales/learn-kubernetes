@@ -1,0 +1,322 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: graceful-shutdown-demo
+  labels:
+    app: graceful-shutdown
+    tier: learning
+    pattern: lifecycle-management
+  annotations:
+    description: "Demonstrates proper graceful shutdown handling"
+    learning.kubernetes.io/exercise: "graceful-termination"
+spec:
+  containers:
+  - name: web-server
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+      name: http
+    
+    # Custom nginx config for graceful shutdown demonstration
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d
+    - name: app-logs
+      mountPath: /var/log/nginx
+    - name: shared-data
+      mountPath: /shared
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    # Lifecycle hooks for graceful shutdown
+    lifecycle:
+      preStop:
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "$(date): PreStop hook executed - starting graceful shutdown" >> /shared/shutdown.log
+            echo "Sending graceful shutdown signal to nginx..."
+            # Give nginx time to finish processing current requests
+            sleep 5
+            echo "$(date): PreStop hook completed" >> /shared/shutdown.log
+    
+    # Health checks
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+  
+  # Sidecar to monitor shutdown process
+  - name: shutdown-monitor
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "Shutdown monitor starting..."
+      
+      # Monitor the shutdown process
+      shutdown_handler() {
+        echo "$(date): Shutdown monitor received SIGTERM" >> /shared/shutdown.log
+        echo "Monitoring graceful shutdown process..."
+        
+        # Wait for main application to shutdown gracefully
+        while pgrep nginx > /dev/null 2>&1; do
+          echo "$(date): Nginx still running, waiting..." >> /shared/shutdown.log
+          sleep 1
+        done
+        
+        echo "$(date): Nginx shutdown complete" >> /shared/shutdown.log
+        echo "$(date): Shutdown monitor exiting" >> /shared/shutdown.log
+        exit 0
+      }
+      
+      # Set up signal handler
+      trap shutdown_handler TERM
+      
+      # Monitor application state
+      while true; do
+        if pgrep nginx > /dev/null 2>&1; then
+          echo "$(date): Application running normally" >> /shared/status.log
+        else
+          echo "$(date): Application not running" >> /shared/status.log
+        fi
+        sleep 30
+      done
+    
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  
+  # Configure graceful termination
+  terminationGracePeriodSeconds: 60  # Allow 60 seconds for graceful shutdown
+  restartPolicy: Always
+  
+  volumes:
+  - name: nginx-config
+    configMap:
+      name: graceful-nginx-config
+  - name: app-logs
+    emptyDir: {}
+  - name: shared-data
+    emptyDir: {}
+
+---
+# ConfigMap with nginx configuration for graceful shutdown
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graceful-nginx-config
+  labels:
+    app: graceful-shutdown
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Graceful shutdown configuration
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            
+            # Add headers to track request processing
+            add_header X-Server-Name $hostname;
+            add_header X-Request-Time $request_time;
+        }
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Endpoint to generate load for testing
+        location /load {
+            # Simulate slow response
+            echo_sleep 2;
+            return 200 "Load test response after delay\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Shutdown status endpoint
+        location /shutdown-status {
+            alias /shared/;
+            autoindex on;
+            add_header Content-Type text/plain;
+        }
+        
+        # Custom error pages
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {
+            root /usr/share/nginx/html;
+        }
+    }
+  
+  # Custom HTML page
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Graceful Shutdown Demo</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+            .running { background: #e8f5e8; }
+            .stopping { background: #fff3cd; }
+        </style>
+        <script>
+            // Auto-refresh to show real-time status
+            setTimeout(() => location.reload(), 5000);
+        </script>
+    </head>
+    <body>
+        <h1>Graceful Shutdown Demo</h1>
+        
+        <div class="status running">
+            <h2>✅ Application Running</h2>
+            <p>This application demonstrates proper graceful shutdown handling.</p>
+        </div>
+        
+        <h3>Test Endpoints:</h3>
+        <ul>
+            <li><a href="/health">Health Check</a></li>
+            <li><a href="/load">Load Test (2s delay)</a></li>
+            <li><a href="/shutdown-status">Shutdown Status Logs</a></li>
+        </ul>
+        
+        <h3>Testing Graceful Shutdown:</h3>
+        <ol>
+            <li>Generate some load: <code>curl http://&lt;pod-ip&gt;/load</code></li>
+            <li>Delete the pod: <code>kubectl delete pod graceful-shutdown-demo</code></li>
+            <li>Watch the shutdown process: <code>kubectl logs -f graceful-shutdown-demo -c shutdown-monitor</code></li>
+            <li>Observe that in-flight requests complete before termination</li>
+        </ol>
+        
+        <p><em>Page auto-refreshes every 5 seconds</em></p>
+    </body>
+    </html>
+
+---
+# Deployment version for testing rolling updates with graceful shutdown
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graceful-shutdown-deployment
+  labels:
+    app: graceful-shutdown
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: graceful-shutdown
+  template:
+    metadata:
+      labels:
+        app: graceful-shutdown
+        version: v1
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        # Critical: PreStop hook for graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - |
+                echo "Starting graceful shutdown..."
+                # Stop accepting new connections
+                nginx -s quit
+                # Wait for existing connections to complete
+                sleep 10
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          # Important: Fail readiness quickly during shutdown
+          failureThreshold: 1
+      
+      # Allow sufficient time for graceful shutdown
+      terminationGracePeriodSeconds: 30
+      
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: graceful-nginx-config
+
+---
+# Service for the graceful shutdown demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: graceful-shutdown-service
+  labels:
+    app: graceful-shutdown
+spec:
+  selector:
+    app: graceful-shutdown
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP

@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lifecycle-demo
+  labels:
+    app: lifecycle-demo
+    tier: learning
+    pattern: lifecycle
+  annotations:
+    description: "Demonstrates pod lifecycle states and transitions"
+    learning.kubernetes.io/exercise: "pod-lifecycle"
+spec:
+  containers:
+  - name: lifecycle-container
+    image: busybox:1.35
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      echo "=== POD LIFECYCLE DEMO ==="
+      echo "Container starting at $(date)"
+      echo "Process ID: $$"
+      echo "Container name: $HOSTNAME"
+      
+      # Simulate application startup
+      echo "Phase 1: Application initialization..."
+      sleep 5
+      
+      echo "Phase 2: Loading configuration..."
+      sleep 3
+      
+      echo "Phase 3: Connecting to dependencies..."
+      sleep 2
+      
+      echo "Phase 4: Application ready!"
+      echo "Application is now running and serving requests..."
+      
+      # Run for a specific duration then exit successfully
+      echo "Application will run for 60 seconds then gracefully shut down..."
+      
+      # Simulate application work
+      for i in $(seq 1 12); do
+        echo "Working... iteration $i/12 at $(date)"
+        sleep 5
+      done
+      
+      echo "Application completed successfully at $(date)"
+      echo "Performing cleanup..."
+      sleep 2
+      echo "Cleanup complete. Exiting with status 0."
+      exit 0
+    
+    env:
+    - name: APP_NAME
+      value: "lifecycle-demo"
+    - name: STARTUP_DELAY
+      value: "10"
+    - name: RUN_DURATION
+      value: "60"
+    
+    # Resource constraints to observe scheduling
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+    
+    # Lifecycle hooks
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "PostStart hook executed at $(date)" > /tmp/lifecycle-hooks.log
+            echo "Container is starting up..." >> /tmp/lifecycle-hooks.log
+      
+      preStop:
+        exec:
+          command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "PreStop hook executed at $(date)" >> /tmp/lifecycle-hooks.log
+            echo "Container is about to be terminated..." >> /tmp/lifecycle-hooks.log
+            # Graceful shutdown simulation
+            sleep 5
+    
+    # Health checks to observe readiness/liveness states
+    readinessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "test -f /tmp/app-ready"
+      initialDelaySeconds: 15
+      periodSeconds: 5
+      failureThreshold: 3
+    
+    livenessProbe:
+      exec:
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "ps aux | grep -v grep | grep sleep"
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      failureThreshold: 2
+  
+  # Configure restart policy
+  restartPolicy: Never  # Pod will not restart after completion
+  
+  # Grace period for termination
+  terminationGracePeriodSeconds: 30
+
+---
+# Job version to demonstrate different completion behaviors
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lifecycle-job-demo
+  labels:
+    app: lifecycle-demo
+    type: job
+spec:
+  template:
+    metadata:
+      labels:
+        app: lifecycle-demo
+        type: job-pod
+    spec:
+      containers:
+      - name: job-container
+        image: busybox:1.35
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "=== JOB LIFECYCLE DEMO ==="
+          echo "Job started at $(date)"
+          
+          # Simulate work phases
+          for phase in "initialization" "processing" "cleanup"; do
+            echo "Phase: $phase"
+            case $phase in
+              "initialization")
+                echo "Setting up environment..."
+                sleep 3
+                ;;
+              "processing")
+                echo "Processing data..."
+                for i in $(seq 1 5); do
+                  echo "Processing item $i/5"
+                  sleep 2
+                done
+                ;;
+              "cleanup")
+                echo "Cleaning up resources..."
+                sleep 2
+                ;;
+            esac
+            echo "Phase $phase completed"
+          done
+          
+          echo "Job completed successfully at $(date)"
+          exit 0
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+      
+      restartPolicy: Never
+  
+  # Job will be considered complete when pod succeeds
+  completions: 1
+  backoffLimit: 2

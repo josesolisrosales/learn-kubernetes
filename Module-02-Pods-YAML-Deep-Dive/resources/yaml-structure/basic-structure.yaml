@@ -1,0 +1,320 @@
+# Basic YAML Structure Demonstration
+# This file demonstrates the fundamental structure of Kubernetes YAML manifests
+
+# =============================================================================
+# SECTION 1: Minimal Pod Example
+# =============================================================================
+apiVersion: v1                    # API version - tells Kubernetes which API to use
+kind: Pod                         # Resource type - what kind of object this is
+metadata:                         # Information about the resource
+  name: basic-pod                 # Required: unique name within namespace
+  namespace: default              # Optional: namespace (defaults to 'default')
+spec:                            # Desired state specification
+  containers:                    # Required: list of containers
+  - name: basic-container        # Required: container name
+    image: nginx:1.21            # Required: container image
+status: {}                       # Current state (managed by Kubernetes, usually omitted in manifests)
+
+---
+# =============================================================================
+# SECTION 2: Structure with Comments Explaining Each Field
+# =============================================================================
+apiVersion: v1                    # Core API group, version v1
+kind: Pod                         # Kubernetes object type
+metadata:                         # Object metadata section
+  # Required fields
+  name: annotated-pod             # Must be unique within namespace
+  
+  # Optional but commonly used fields
+  namespace: default              # Logical cluster subdivision
+  
+  # Identification and organization
+  labels:                         # Key-value pairs for identification and selection
+    app: demo-app                 # Application name (common convention)
+    version: "1.0"               # Version identifier
+    tier: frontend               # Application tier
+    environment: development     # Environment designation
+  
+  # Metadata and annotations
+  annotations:                    # Key-value pairs for metadata (not used for selection)
+    description: "Demonstrates basic YAML structure"
+    kubernetes.io/created-by: "manual-creation"
+    contact: "admin@example.com"
+    documentation: "https://example.com/docs"
+  
+  # System fields (usually set by Kubernetes)
+  # uid: "auto-generated-unique-id"
+  # resourceVersion: "12345"
+  # creationTimestamp: "2023-01-01T00:00:00Z"
+
+spec:                            # Desired state specification
+  # Container specification (required)
+  containers:
+  - name: main-container         # Container name (required)
+    image: nginx:1.21           # Container image (required)
+    
+    # Optional container fields commonly used
+    ports:                      # Ports to expose
+    - containerPort: 80         # Port number
+      name: http               # Port name (optional)
+      protocol: TCP            # Protocol (default: TCP)
+    
+    env:                        # Environment variables
+    - name: ENV_VAR_NAME       # Variable name
+      value: "env-var-value"   # Variable value
+    
+    resources:                  # Resource requirements and limits
+      requests:                 # Minimum resources required
+        memory: "64Mi"
+        cpu: "50m"
+      limits:                   # Maximum resources allowed
+        memory: "128Mi"
+        cpu: "100m"
+  
+  # Pod-level specifications (optional)
+  restartPolicy: Always         # When to restart containers (Always, OnFailure, Never)
+  
+  # Node selection (optional)
+  nodeSelector:                 # Schedule on nodes with matching labels
+    disktype: ssd
+  
+  # Storage (optional)
+  volumes: []                   # List of volumes (empty in this example)
+
+# Status section (managed by Kubernetes - not specified in manifests)
+# status:
+#   phase: Running             # Pod phase (Pending, Running, Succeeded, Failed, Unknown)
+#   conditions:               # Array of pod conditions
+#   - type: Ready
+#     status: "True"
+#   podIP: "10.244.0.5"      # Assigned IP address
+#   startTime: "2023-01-01T00:00:00Z"
+
+---
+# =============================================================================
+# SECTION 3: YAML Syntax Demonstration
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yaml-syntax-demo
+  annotations:
+    description: "Demonstrates YAML syntax elements used in Kubernetes"
+data:
+  # String values (different ways to specify)
+  simple-string: "This is a simple string"
+  single-quoted: 'Single quoted string'
+  double-quoted: "Double quoted string with\nnewline"
+  unquoted: This is an unquoted string
+  
+  # Multi-line strings
+  literal-block: |
+    This is a literal block scalar.
+    Line breaks are preserved.
+    Each line appears as written.
+    
+    Empty lines are preserved too.
+  
+  folded-block: >
+    This is a folded block scalar.
+    Lines are folded into a single line
+    with spaces between words.
+    
+    Empty lines create paragraph breaks.
+  
+  # Numeric values
+  integer-value: "42"
+  float-value: "3.14"
+  scientific: "1.23e-4"
+  
+  # Boolean values (as strings in ConfigMap)
+  boolean-true: "true"
+  boolean-false: "false"
+  
+  # JSON in YAML (valid since JSON is subset of YAML)
+  json-config: |
+    {
+      "database": {
+        "host": "localhost",
+        "port": 5432,
+        "credentials": {
+          "username": "admin",
+          "password": "secret"
+        }
+      }
+    }
+  
+  # YAML nested structure
+  yaml-config: |
+    database:
+      host: localhost
+      port: 5432
+      credentials:
+        username: admin
+        password: secret
+      options:
+        - ssl: true
+        - timeout: 30
+        - retry_count: 3
+
+---
+# =============================================================================
+# SECTION 4: Common YAML Gotchas and Best Practices
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: yaml-best-practices
+  annotations:
+    examples.kubernetes.io/yaml-gotchas: |
+      Common YAML issues to avoid:
+      
+      1. Indentation: Use spaces, not tabs (typically 2 spaces)
+      2. Quotes: Use quotes for strings that might be interpreted as other types
+      3. Numbers: Version numbers like "1.0" should be quoted
+      4. Booleans: "true"/"false" vs true/false (context dependent)
+      5. Empty values: Use {} for empty objects, [] for empty arrays
+      6. Multi-line: Use | for literal blocks, > for folded blocks
+spec:
+  containers:
+  - name: demo-container
+    image: busybox:1.35
+    command: ["echo", "YAML best practices demo"]
+    
+    # Example of proper resource specification
+    resources:
+      requests:
+        memory: "64Mi"      # Quoted to ensure string interpretation
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    # Environment variables with different value types
+    env:
+    - name: STRING_VAR
+      value: "hello-world"          # Simple string
+    - name: NUMERIC_STRING
+      value: "12345"               # Numeric value as string (recommended)
+    - name: BOOLEAN_STRING  
+      value: "true"                # Boolean as string
+    - name: VERSION
+      value: "1.0.0"              # Version number (must be quoted!)
+    - name: COMPLEX_VALUE
+      value: "key1=value1,key2=value2"  # Complex string value
+  
+  # Proper way to specify empty collections
+  volumes: []           # Empty array
+  imagePullSecrets: []  # Empty array
+  tolerations: []       # Empty array
+  
+  # Node selection with proper formatting
+  nodeSelector: {}      # Empty object (no node selection)
+  
+  restartPolicy: Always  # Unquoted enum value
+
+---
+# =============================================================================
+# SECTION 5: API Version and Kind Combinations
+# =============================================================================
+
+# Core API resources (apiVersion: v1)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: core-api-pod
+spec:
+  containers:
+  - name: container
+    image: nginx:1.21
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-api-service
+spec:
+  selector:
+    app: demo
+  ports:
+  - port: 80
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: core-api-configmap
+data:
+  key: value
+
+# Apps API group resources
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apps-api-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: container
+        image: nginx:1.21
+
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: apps-api-replicaset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: container
+        image: nginx:1.21
+
+# Batch API group resources
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-api-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: container
+        image: busybox:1.35
+        command: ["echo", "Hello from job"]
+      restartPolicy: Never
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-api-cronjob
+spec:
+  schedule: "0 */6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: container
+            image: busybox:1.35
+            command: ["echo", "Hello from cron job"]
+          restartPolicy: OnFailure

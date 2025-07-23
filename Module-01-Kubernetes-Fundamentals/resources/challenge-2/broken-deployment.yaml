@@ -1,0 +1,64 @@
+# Challenge 2: Troubleshooting Practice
+# This deployment has intentional errors - find and fix them!
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-deployment
+  labels:
+    app: troubleshooting
+    exercise: challenge-2
+spec:
+  replicas: 3
+  
+  # ERROR 1: Missing selector (required field)
+  # selector:
+  #   matchLabels:
+  #     app: web-app
+  
+  template:
+    metadata:
+      labels:
+        app: web-app
+        tier: frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        # ERROR 2: Invalid YAML indentation
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "50m"
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+        
+        # ERROR 3: Malformed environment variable
+        env:
+        - name: 
+          value: "some-value"  # Missing name
+        
+        # ERROR 4: Invalid health check path
+        livenessProbe:
+          httpGet:
+            path: /nonexistent-path
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+# Instructions for students:
+# 1. Try to apply this file: kubectl apply -f broken-deployment.yaml
+# 2. Some errors will be caught by YAML validation
+# 3. Others will cause runtime issues
+# 4. Use these commands to debug:
+#    - kubectl get deployments
+#    - kubectl describe deployment broken-deployment
+#    - kubectl get replicasets
+#    - kubectl get pods
+#    - kubectl describe pod <pod-name>
+# 5. Fix each error systematically
+# 6. Verify all 3 replicas are running successfully
