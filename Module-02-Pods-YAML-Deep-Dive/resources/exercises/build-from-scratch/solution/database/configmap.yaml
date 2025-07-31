@@ -1,0 +1,432 @@
+# Database Configuration - E-commerce Platform
+# PostgreSQL configuration and monitoring setup
+
+---
+# PostgreSQL Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: database
+    tier: data
+    config-type: postgres
+  annotations:
+    config.kubernetes.io/description: "PostgreSQL server configuration"
+data:
+  # PostgreSQL main configuration
+  postgresql.conf: |
+    # PostgreSQL Configuration for E-commerce Platform
+    
+    # Connection Settings
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 100
+    superuser_reserved_connections = 3
+    
+    # Memory Settings
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    work_mem = 4MB
+    maintenance_work_mem = 32MB
+    
+    # Logging Settings
+    logging_collector = on
+    log_directory = '/var/log/postgresql'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_file_mode = 0644
+    log_truncate_on_rotation = on
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_min_messages = info
+    log_min_error_statement = error
+    log_min_duration_statement = 1000
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_statement = 'mod'
+    log_temp_files = 0
+    
+    # Performance Settings
+    checkpoint_timeout = 15min
+    checkpoint_completion_target = 0.7
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    
+    # Write Ahead Logging (WAL)
+    wal_level = replica
+    archive_mode = on
+    archive_command = 'test ! -f /var/lib/postgresql/backup/archive/%f && cp %p /var/lib/postgresql/backup/archive/%f'
+    max_wal_senders = 3
+    max_replication_slots = 3
+    
+    # Background Writer
+    bgwriter_delay = 200ms
+    bgwriter_lru_maxpages = 100
+    bgwriter_lru_multiplier = 2.0
+    bgwriter_flush_after = 512kB
+    
+    # Query Planner
+    seq_page_cost = 1.0
+    random_page_cost = 4.0
+    cpu_tuple_cost = 0.01
+    cpu_index_tuple_cost = 0.005
+    cpu_operator_cost = 0.0025
+    
+    # Error Reporting and Logging
+    log_lock_waits = on
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_timezone = 'UTC'
+    
+    # Locale and Formatting
+    datestyle = 'iso, mdy'
+    timezone = 'UTC'
+    lc_messages = 'en_US.utf8'
+    lc_monetary = 'en_US.utf8'
+    lc_numeric = 'en_US.utf8'
+    lc_time = 'en_US.utf8'
+    default_text_search_config = 'pg_catalog.english'
+    
+    # Security Settings
+    ssl = off  # In production, enable SSL
+    password_encryption = scram-sha-256
+    
+    # Autovacuum Settings
+    autovacuum = on
+    autovacuum_max_workers = 3
+    autovacuum_naptime = 1min
+    autovacuum_vacuum_threshold = 50
+    autovacuum_analyze_threshold = 50
+    autovacuum_vacuum_scale_factor = 0.2
+    autovacuum_analyze_scale_factor = 0.1
+    
+    # Statement Timeout (prevent long-running queries)
+    statement_timeout = 300000  # 5 minutes
+    lock_timeout = 30000        # 30 seconds
+    idle_in_transaction_session_timeout = 600000  # 10 minutes
+
+---
+# PostgreSQL Host-Based Authentication
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-hba-config
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: database
+    tier: data
+    config-type: hba
+  annotations:
+    config.kubernetes.io/description: "PostgreSQL host-based authentication configuration"
+data:
+  pg_hba.conf: |
+    # PostgreSQL Client Authentication Configuration
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    
+    # Local connections
+    local   all             postgres                                peer
+    local   all             all                                     md5
+    
+    # IPv4 local connections
+    host    all             all             127.0.0.1/32            md5
+    
+    # Kubernetes cluster connections
+    host    all             all             10.0.0.0/8              md5
+    host    all             all             172.16.0.0/12           md5
+    host    all             all             192.168.0.0/16          md5
+    
+    # Application connections
+    host    ecommerce_db    api_user        10.0.0.0/8              scram-sha-256
+    host    ecommerce_db    api_user        172.16.0.0/12           scram-sha-256
+    host    ecommerce_db    api_user        192.168.0.0/16          scram-sha-256
+    
+    # Replication connections
+    host    replication     postgres        10.0.0.0/8              md5
+    host    replication     postgres        172.16.0.0/12           md5
+    host    replication     postgres        192.168.0.0/16          md5
+
+---
+# PostgreSQL Exporter Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-exporter-config
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: database
+    tier: data
+    config-type: monitoring
+  annotations:
+    config.kubernetes.io/description: "PostgreSQL exporter configuration for Prometheus metrics"
+data:
+  queries.yaml: |
+    # PostgreSQL Exporter Custom Queries
+    
+    # Database size metrics
+    pg_database_size:
+      query: "SELECT pg_database.datname, pg_database_size(pg_database.datname) as size FROM pg_database"
+      master: true
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - size:
+            usage: "GAUGE"
+            description: "Size of the database in bytes"
+    
+    # Table size metrics
+    pg_table_size:
+      query: |
+        SELECT 
+          schemaname,
+          tablename,
+          pg_total_relation_size(schemaname||'.'||tablename) as size,
+          pg_relation_size(schemaname||'.'||tablename) as table_size,
+          n_tup_ins + n_tup_upd + n_tup_del as total_modifications
+        FROM pg_tables 
+        JOIN pg_stat_user_tables ON pg_tables.tablename = pg_stat_user_tables.relname
+        WHERE schemaname = 'public'
+      master: true
+      metrics:
+        - schemaname:
+            usage: "LABEL"
+            description: "Name of the schema"
+        - tablename:
+            usage: "LABEL"
+            description: "Name of the table"
+        - size:
+            usage: "GAUGE"
+            description: "Total size of the table including indexes"
+        - table_size:
+            usage: "GAUGE"
+            description: "Size of the table excluding indexes"
+        - total_modifications:
+            usage: "COUNTER"
+            description: "Total number of modifications (inserts, updates, deletes)"
+    
+    # Connection count by state
+    pg_connections:
+      query: "SELECT state, COUNT(*) as count FROM pg_stat_activity GROUP BY state"
+      master: true
+      metrics:
+        - state:
+            usage: "LABEL"
+            description: "Connection state"
+        - count:
+            usage: "GAUGE"
+            description: "Number of connections in this state"
+    
+    # Slow queries
+    pg_slow_queries:
+      query: |
+        SELECT 
+          query,
+          calls,
+          total_time,
+          mean_time,
+          rows
+        FROM pg_stat_statements 
+        WHERE mean_time > 1000
+        ORDER BY mean_time DESC 
+        LIMIT 10
+      master: true
+      metrics:
+        - query:
+            usage: "LABEL"
+            description: "Query text (truncated)"
+        - calls:
+            usage: "COUNTER"
+            description: "Number of times executed"
+        - total_time:
+            usage: "COUNTER"
+            description: "Total time spent in milliseconds"
+        - mean_time:
+            usage: "GAUGE"
+            description: "Mean time per execution in milliseconds"
+        - rows:
+            usage: "COUNTER"
+            description: "Total number of rows retrieved or affected"
+    
+    # Lock information
+    pg_locks:
+      query: |
+        SELECT 
+          mode,
+          locktype,
+          COUNT(*) as count
+        FROM pg_locks 
+        WHERE NOT granted 
+        GROUP BY mode, locktype
+      master: true
+      metrics:
+        - mode:
+            usage: "LABEL"
+            description: "Lock mode"
+        - locktype:
+            usage: "LABEL"
+            description: "Lock type"
+        - count:
+            usage: "GAUGE"
+            description: "Number of locks waiting"
+    
+    # Replication lag (for future use with read replicas)
+    pg_replication_lag:
+      query: |
+        SELECT 
+          client_addr,
+          application_name,
+          state,
+          EXTRACT(EPOCH FROM (now() - backend_start)) as backend_age,
+          CASE WHEN pg_is_in_recovery() THEN NULL ELSE pg_wal_lsn_diff(pg_current_wal_lsn(), flush_lsn) END as lag_bytes
+        FROM pg_stat_replication
+      master: true
+      metrics:
+        - client_addr:
+            usage: "LABEL"
+            description: "IP address of the standby server"
+        - application_name:
+            usage: "LABEL"
+            description: "Name of the application"
+        - state:
+            usage: "LABEL"
+            description: "Current WAL sender state"
+        - backend_age:
+            usage: "GAUGE"
+            description: "Age of the backend in seconds"
+        - lag_bytes:
+            usage: "GAUGE"
+            description: "Replication lag in bytes"
+
+---
+# Database initialization scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-scripts
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: database
+    tier: data
+    config-type: scripts
+  annotations:
+    config.kubernetes.io/description: "Database maintenance and utility scripts"
+data:
+  backup.sh: |
+    #!/bin/bash
+    # Database backup script
+    
+    set -e
+    
+    DB_NAME=${POSTGRES_DB:-ecommerce_db}
+    DB_USER=${POSTGRES_USER:-postgres}
+    BACKUP_DIR=${BACKUP_DIR:-/var/lib/postgresql/backup}
+    
+    echo "Starting database backup for $DB_NAME..."
+    
+    # Create backup directory if it doesn't exist
+    mkdir -p "$BACKUP_DIR"
+    
+    # Generate backup filename with timestamp
+    BACKUP_FILE="$BACKUP_DIR/backup_${DB_NAME}_$(date +%Y%m%d_%H%M%S).sql"
+    
+    # Create the backup
+    pg_dump -h localhost -U "$DB_USER" -d "$DB_NAME" --verbose --no-password > "$BACKUP_FILE"
+    
+    if [ $? -eq 0 ]; then
+        echo "Backup completed successfully: $BACKUP_FILE"
+        
+        # Compress the backup
+        gzip "$BACKUP_FILE"
+        echo "Backup compressed: ${BACKUP_FILE}.gz"
+        
+        # Clean up old backups (keep last 7 days)
+        find "$BACKUP_DIR" -name "backup_${DB_NAME}_*.sql.gz" -mtime +7 -delete
+        echo "Old backups cleaned up"
+    else
+        echo "Backup failed!"
+        exit 1
+    fi
+  
+  restore.sh: |
+    #!/bin/bash
+    # Database restore script
+    
+    set -e
+    
+    if [ $# -ne 1 ]; then
+        echo "Usage: $0 <backup_file>"
+        exit 1
+    fi
+    
+    BACKUP_FILE=$1
+    DB_NAME=${POSTGRES_DB:-ecommerce_db}
+    DB_USER=${POSTGRES_USER:-postgres}
+    
+    echo "Starting database restore from $BACKUP_FILE..."
+    
+    # Check if backup file exists
+    if [ ! -f "$BACKUP_FILE" ]; then
+        echo "Backup file not found: $BACKUP_FILE"
+        exit 1
+    fi
+    
+    # If it's a compressed file, decompress it first
+    if [[ "$BACKUP_FILE" == *.gz ]]; then
+        echo "Decompressing backup file..."
+        gunzip -c "$BACKUP_FILE" | psql -h localhost -U "$DB_USER" -d "$DB_NAME"
+    else
+        psql -h localhost -U "$DB_USER" -d "$DB_NAME" < "$BACKUP_FILE"
+    fi
+    
+    if [ $? -eq 0 ]; then
+        echo "Database restore completed successfully"
+    else
+        echo "Database restore failed!"
+        exit 1
+    fi
+  
+  health-check.sh: |
+    #!/bin/bash
+    # Database health check script
+    
+    DB_NAME=${POSTGRES_DB:-ecommerce_db}
+    DB_USER=${POSTGRES_USER:-postgres}
+    
+    echo "Checking database health..."
+    
+    # Check if PostgreSQL is running
+    if ! pg_isready -h localhost -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1; then
+        echo "❌ Database is not ready"
+        exit 1
+    fi
+    
+    # Check if we can connect and run a simple query
+    if ! psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" > /dev/null 2>&1; then
+        echo "❌ Cannot execute queries"
+        exit 1
+    fi
+    
+    # Check table existence
+    TABLES=$(psql -h localhost -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
+    if [ "$TABLES" -lt 4 ]; then
+        echo "⚠️  Expected tables not found (found: $TABLES, expected: 4+)"
+        exit 1
+    fi
+    
+    # Check recent activity
+    CONNECTIONS=$(psql -h localhost -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '$DB_NAME'")
+    
+    echo "✅ Database health check passed"
+    echo "   - PostgreSQL is ready"
+    echo "   - Queries are working"
+    echo "   - Tables: $TABLES"
+    echo "   - Active connections: $CONNECTIONS"
+    
+    exit 0

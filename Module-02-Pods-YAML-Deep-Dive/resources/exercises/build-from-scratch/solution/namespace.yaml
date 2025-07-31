@@ -1,0 +1,212 @@
+# Namespace and RBAC for E-commerce Platform
+# Creates isolated environment for the complete application
+
+---
+# Main application namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecommerce-platform
+  labels:
+    name: ecommerce-platform
+    environment: development
+    project: kubernetes-learning
+    tier: application
+  annotations:
+    description: "Complete e-commerce platform demonstrating Kubernetes pod concepts"
+    contact: "devops-team@company.com"
+    documentation: "https://docs.company.com/ecommerce-platform"
+
+---
+# Service Account for the application
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecommerce-app-sa
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: service-account
+  annotations:
+    description: "Service account for e-commerce application pods"
+automountServiceAccountToken: true
+
+---
+# Role for application-specific permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ecommerce-app-role
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: rbac
+rules:
+# Allow reading ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Allow reading services for service discovery
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+# Allow reading pods for health checking
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# Allow creating events for logging
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+
+---
+# RoleBinding to assign role to service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecommerce-app-binding
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: ecommerce-app-sa
+  namespace: ecommerce-platform
+roleRef:
+  kind: Role
+  name: ecommerce-app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Network Policy for namespace isolation (optional)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ecommerce-network-policy
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: network-policy
+spec:
+  podSelector: {}  # Apply to all pods in namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Ingress rules
+  ingress:
+  # Allow traffic from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ecommerce-platform
+  # Allow traffic from ingress controllers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  
+  # Egress rules
+  egress:
+  # Allow traffic to same namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: ecommerce-platform
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS to external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow HTTP to external services (for development)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Resource Quota for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ecommerce-resource-quota
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: resource-quota
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    
+    # Storage resources
+    requests.storage: 10Gi
+    persistentvolumeclaims: "3"
+    
+    # Object counts
+    pods: "20"
+    services: "10"
+    configmaps: "10"
+    secrets: "5"
+    
+    # LoadBalancer services (expensive)
+    services.loadbalancers: "2"
+
+---
+# Limit Range for default resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ecommerce-limit-range
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: limit-range
+spec:
+  limits:
+  # Default limits for containers
+  - type: Container
+    default:
+      cpu: "200m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "50m"
+      memory: "64Mi"
+    max:
+      cpu: "1"
+      memory: "1Gi"
+    min:
+      cpu: "10m"
+      memory: "16Mi"
+  
+  # Default limits for pods
+  - type: Pod
+    max:
+      cpu: "2"
+      memory: "2Gi"
+    min:
+      cpu: "10m"
+      memory: "16Mi"
+  
+  # Default limits for PVCs
+  - type: PersistentVolumeClaim
+    max:
+      storage: 5Gi
+    min:
+      storage: 1Gi

@@ -1,0 +1,696 @@
+# Service Types Comparison Demo
+# This file demonstrates all four Kubernetes service types with the same application
+# ClusterIP, NodePort, LoadBalancer, and ExternalName services side by side
+# Perfect for understanding differences and use cases
+
+---
+# Shared namespace for service comparison
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: service-comparison
+  labels:
+    purpose: service-types-comparison
+    demo: comprehensive
+
+---
+# Single deployment that all services will target
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: service-comparison
+  labels:
+    app: demo-app
+    demo: service-comparison
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demo-app
+  template:
+    metadata:
+      labels:
+        app: demo-app
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: app-content
+          mountPath: /usr/share/nginx/html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: app-config
+        configMap:
+          name: demo-app-config
+      - name: app-content
+        configMap:
+          name: demo-app-content
+
+---
+# 1. ClusterIP Service (Default) - Internal cluster access only
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-clusterip
+  namespace: service-comparison
+  labels:
+    app: demo-app
+    service-type: clusterip
+  annotations:
+    service.kubernetes.io/description: "ClusterIP - Internal cluster access only"
+spec:
+  # type: ClusterIP  # Default, can be omitted
+  selector:
+    app: demo-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# 2. NodePort Service - External access via node IPs
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-nodeport
+  namespace: service-comparison
+  labels:
+    app: demo-app
+    service-type: nodeport
+  annotations:
+    service.kubernetes.io/description: "NodePort - External access via node IPs on port 30080"
+spec:
+  type: NodePort
+  selector:
+    app: demo-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30080
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# 3. LoadBalancer Service - Cloud provider load balancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-loadbalancer
+  namespace: service-comparison
+  labels:
+    app: demo-app
+    service-type: loadbalancer
+  annotations:
+    service.kubernetes.io/description: "LoadBalancer - Cloud provider external load balancer"
+spec:
+  type: LoadBalancer
+  selector:
+    app: demo-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# 4. ExternalName Service - Maps to external DNS name
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-external
+  namespace: service-comparison
+  labels:
+    service-type: externalname
+  annotations:
+    service.kubernetes.io/description: "ExternalName - Maps to external service (example.com)"
+spec:
+  type: ExternalName
+  externalName: example.com
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# Additional ExternalName example for database
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-database
+  namespace: service-comparison
+  labels:
+    service-type: externalname
+    purpose: database
+  annotations:
+    service.kubernetes.io/description: "ExternalName - External database mapping"
+spec:
+  type: ExternalName
+  externalName: database.example.com
+  ports:
+  - port: 5432
+    protocol: TCP
+
+---
+# Test client pod for internal testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-client
+  namespace: service-comparison
+  labels:
+    role: test-client
+spec:
+  containers:
+  - name: client
+    image: alpine:3.18
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+
+---
+# Advanced debugging pod with network tools
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-debug
+  namespace: service-comparison
+  labels:
+    role: network-debug
+spec:
+  containers:
+  - name: nettools
+    image: nicolaka/netshoot:v0.11
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# ConfigMap for nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-app-config
+  namespace: service-comparison
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        # Add headers to show which service was used
+        add_header X-Pod-Name $hostname;
+        add_header X-Service-Demo "All-Service-Types";
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Service info endpoint
+        location /service-info {
+            access_log off;
+            return 200 "{\"pod\": \"$hostname\", \"service_demo\": \"all-types\", \"timestamp\": \"$time_iso8601\", \"request_id\": \"$request_id\"}\n";
+            add_header Content-Type application/json;
+        }
+
+        # Connection info for debugging access methods
+        location /connection-info {
+            access_log off;
+            return 200 "Pod: $hostname\nRemote IP: $remote_addr\nForwarded For: $http_x_forwarded_for\nHost Header: $host\nUser Agent: $http_user_agent\nConnection: $connection\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# ConfigMap for web content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-app-content
+  namespace: service-comparison
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Kubernetes Service Types Comparison</title>
+        <style>
+            body {
+                font-family: 'Arial', sans-serif;
+                margin: 0;
+                padding: 30px;
+                background: linear-gradient(135deg, #6B73FF 0%, #000DFF 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 40px;
+                border-radius: 20px;
+                backdrop-filter: blur(20px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .title {
+                text-align: center;
+                font-size: 2.5em;
+                margin-bottom: 40px;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            }
+            .service-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 25px;
+                margin: 30px 0;
+            }
+            .service-card {
+                background: rgba(255, 255, 255, 0.15);
+                padding: 25px;
+                border-radius: 15px;
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+                border-top: 4px solid;
+            }
+            .service-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 12px 25px rgba(0, 0, 0, 0.4);
+            }
+            .clusterip { border-top-color: #4CAF50; }
+            .nodeport { border-top-color: #FF9800; }
+            .loadbalancer { border-top-color: #2196F3; }
+            .externalname { border-top-color: #9C27B0; }
+            
+            .service-header {
+                display: flex;
+                align-items: center;
+                margin-bottom: 15px;
+            }
+            .service-icon {
+                font-size: 2em;
+                margin-right: 15px;
+            }
+            .service-name {
+                font-size: 1.3em;
+                font-weight: bold;
+            }
+            .comparison-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 30px 0;
+                background: rgba(255, 255, 255, 0.9);
+                color: #333;
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            }
+            .comparison-table th, .comparison-table td {
+                padding: 15px;
+                text-align: left;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            .comparison-table th {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                font-weight: bold;
+            }
+            .comparison-table tr:hover {
+                background: #f5f5f5;
+            }
+            .access-method {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 15px 0;
+                border-left: 4px solid #00BCD4;
+            }
+            .command {
+                background: #1a1a2e;
+                color: #e2e8f0;
+                padding: 15px;
+                border-radius: 8px;
+                font-family: 'Courier New', monospace;
+                margin: 10px 0;
+                overflow-x: auto;
+                border-left: 3px solid #16D9E3;
+            }
+            .pros-cons {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 15px;
+                margin: 15px 0;
+            }
+            .pros {
+                background: rgba(76, 175, 80, 0.2);
+                padding: 15px;
+                border-radius: 8px;
+                border-left: 3px solid #4CAF50;
+            }
+            .cons {
+                background: rgba(255, 152, 0, 0.2);
+                padding: 15px;
+                border-radius: 8px;
+                border-left: 3px solid #FF9800;
+            }
+            .success { color: #4CAF50; font-weight: bold; }
+            .warning { color: #FF9800; font-weight: bold; }
+            .info { color: #2196F3; font-weight: bold; }
+            .external { color: #FF5722; font-weight: bold; }
+            .test-section {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 25px;
+                border-radius: 12px;
+                margin: 30px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 class="title">🔗 Kubernetes Service Types Comparison</h1>
+            
+            <div class="service-grid">
+                <div class="service-card clusterip">
+                    <div class="service-header">
+                        <div class="service-icon">🔒</div>
+                        <div class="service-name">ClusterIP</div>
+                    </div>
+                    <p><strong>Internal cluster communication only</strong></p>
+                    <div class="pros-cons">
+                        <div class="pros">
+                            <h4>✅ Pros</h4>
+                            <ul>
+                                <li>Secure by default</li>
+                                <li>DNS resolution</li>
+                                <li>Load balancing</li>
+                                <li>No external exposure</li>
+                            </ul>
+                        </div>
+                        <div class="cons">
+                            <h4>⚠️ Cons</h4>
+                            <ul>
+                                <li>Internal access only</li>
+                                <li>Requires port-forward for testing</li>
+                                <li>No direct external access</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card nodeport">
+                    <div class="service-header">
+                        <div class="service-icon">🌐</div>
+                        <div class="service-name">NodePort</div>
+                    </div>
+                    <p><strong>External access via node IPs and specific ports</strong></p>
+                    <div class="pros-cons">
+                        <div class="pros">
+                            <h4>✅ Pros</h4>
+                            <ul>
+                                <li>External access</li>
+                                <li>No cloud dependency</li>
+                                <li>Simple configuration</li>
+                                <li>Inherits ClusterIP features</li>
+                            </ul>
+                        </div>
+                        <div class="cons">
+                            <h4>⚠️ Cons</h4>
+                            <ul>
+                                <li>Limited port range</li>
+                                <li>Requires node IP knowledge</li>
+                                <li>Not production-ready for web</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card loadbalancer">
+                    <div class="service-header">
+                        <div class="service-icon">☁️</div>
+                        <div class="service-name">LoadBalancer</div>
+                    </div>
+                    <p><strong>Cloud provider external load balancer with stable IP</strong></p>
+                    <div class="pros-cons">
+                        <div class="pros">
+                            <h4>✅ Pros</h4>
+                            <ul>
+                                <li>Stable external IP</li>
+                                <li>High availability</li>
+                                <li>Cloud-managed</li>
+                                <li>Production ready</li>
+                            </ul>
+                        </div>
+                        <div class="cons">
+                            <h4>⚠️ Cons</h4>
+                            <ul>
+                                <li>Cloud provider dependency</li>
+                                <li>Additional cost</li>
+                                <li>Provider-specific features</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card externalname">
+                    <div class="service-header">
+                        <div class="service-icon">🔗</div>
+                        <div class="service-name">ExternalName</div>
+                    </div>
+                    <p><strong>Maps to external DNS names for service discovery</strong></p>
+                    <div class="pros-cons">
+                        <div class="pros">
+                            <h4>✅ Pros</h4>
+                            <ul>
+                                <li>External service integration</li>
+                                <li>DNS abstraction</li>
+                                <li>No selectors needed</li>
+                                <li>Migration friendly</li>
+                            </ul>
+                        </div>
+                        <div class="cons">
+                            <h4>⚠️ Cons</h4>
+                            <ul>
+                                <li>DNS dependency</li>
+                                <li>No load balancing</li>
+                                <li>Limited Kubernetes features</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h2>📊 Service Comparison Table</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>ClusterIP</th>
+                        <th>NodePort</th>
+                        <th>LoadBalancer</th>
+                        <th>ExternalName</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>External Access</strong></td>
+                        <td>❌ No</td>
+                        <td>✅ Yes (Node IP:Port)</td>
+                        <td>✅ Yes (External IP)</td>
+                        <td>🔗 Via External DNS</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Cloud Dependency</strong></td>
+                        <td>❌ None</td>
+                        <td>❌ None</td>
+                        <td>✅ Required</td>
+                        <td>❌ None</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IP Address</strong></td>
+                        <td>Cluster IP</td>
+                        <td>Cluster IP + Node IPs</td>
+                        <td>External + Cluster + Node</td>
+                        <td>None (DNS only)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Load Balancing</strong></td>
+                        <td>✅ Internal</td>
+                        <td>✅ Internal + External</td>
+                        <td>✅ All levels</td>
+                        <td>❌ DNS only</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Production Use</strong></td>
+                        <td>✅ Internal services</td>
+                        <td>⚠️ Development/testing</td>
+                        <td>✅ External services</td>
+                        <td>✅ External integrations</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Cost</strong></td>
+                        <td>💚 Free</td>
+                        <td>💚 Free</td>
+                        <td>💰 Load balancer charges</td>
+                        <td>💚 Free</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>🧪 Testing All Service Types</h2>
+            
+            <div class="test-section">
+                <h3>1. View All Services</h3>
+                <div class="command">kubectl get services -n service-comparison -o wide</div>
+                
+                <h3>2. Test ClusterIP (Internal Only)</h3>
+                <div class="command">kubectl exec -it test-client -n service-comparison -- wget -qO- http://demo-app-clusterip</div>
+                
+                <h3>3. Test NodePort (External Access)</h3>
+                <div class="command"># Get node IP first
+kubectl get nodes -o wide
+# Then access via NodePort
+curl http://&lt;NODE-IP&gt;:30080</div>
+                
+                <h3>4. Test LoadBalancer (Cloud Provider)</h3>
+                <div class="command"># Wait for external IP assignment
+kubectl get service demo-app-loadbalancer -w
+# Then access via external IP
+curl http://&lt;EXTERNAL-IP&gt;</div>
+                
+                <h3>5. Test ExternalName (DNS Resolution)</h3>
+                <div class="command">kubectl exec -it network-debug -n service-comparison -- nslookup demo-app-external
+kubectl exec -it network-debug -n service-comparison -- nslookup external-database</div>
+            </div>
+
+            <h2>📋 Access Methods Summary</h2>
+            
+            <div class="access-method">
+                <h4>🔒 ClusterIP: <code>demo-app-clusterip</code></h4>
+                <p><strong>From inside cluster:</strong> <code>http://demo-app-clusterip</code></p>
+                <p><strong>From outside cluster:</strong> <code>kubectl port-forward service/demo-app-clusterip 8080:80</code></p>
+            </div>
+            
+            <div class="access-method">
+                <h4>🌐 NodePort: <code>demo-app-nodeport</code></h4>
+                <p><strong>From inside cluster:</strong> <code>http://demo-app-nodeport</code></p>
+                <p><strong>From outside cluster:</strong> <code>http://&lt;NODE-IP&gt;:30080</code></p>
+            </div>
+            
+            <div class="access-method">
+                <h4>☁️ LoadBalancer: <code>demo-app-loadbalancer</code></h4>
+                <p><strong>From inside cluster:</strong> <code>http://demo-app-loadbalancer</code></p>
+                <p><strong>From outside cluster:</strong> <code>http://&lt;EXTERNAL-IP&gt;</code></p>
+            </div>
+            
+            <div class="access-method">
+                <h4>🔗 ExternalName: <code>demo-app-external</code></h4>
+                <p><strong>DNS Resolution:</strong> <code>demo-app-external</code> → <code>example.com</code></p>
+                <p><strong>Usage:</strong> <code>http://demo-app-external</code> (resolves to external service)</p>
+            </div>
+
+            <h2>🎯 Use Case Guidelines</h2>
+            
+            <div class="service-grid">
+                <div class="service-card">
+                    <h4>🏠 Internal Services</h4>
+                    <p><strong>Use ClusterIP for:</strong></p>
+                    <ul>
+                        <li>Databases (MySQL, PostgreSQL)</li>
+                        <li>Cache services (Redis, Memcached)</li>
+                        <li>Internal APIs</li>
+                        <li>Message brokers</li>
+                    </ul>
+                </div>
+                
+                <div class="service-card">
+                    <h4>🔧 Development & Testing</h4>
+                    <p><strong>Use NodePort for:</strong></p>
+                    <ul>
+                        <li>Development environments</li>
+                        <li>Testing external access</li>
+                        <li>On-premises deployments</li>
+                        <li>Legacy application migration</li>
+                    </ul>
+                </div>
+                
+                <div class="service-card">
+                    <h4>🚀 Production Web Services</h4>
+                    <p><strong>Use LoadBalancer for:</strong></p>
+                    <ul>
+                        <li>Web applications</li>
+                        <li>REST APIs</li>
+                        <li>Microservices gateways</li>
+                        <li>High-availability services</li>
+                    </ul>
+                </div>
+                
+                <div class="service-card">
+                    <h4>🔌 External Integrations</h4>
+                    <p><strong>Use ExternalName for:</strong></p>
+                    <ul>
+                        <li>External databases</li>
+                        <li>Third-party APIs</li>
+                        <li>Migration scenarios</li>
+                        <li>Service abstraction</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h2>🔄 Service Evolution Path</h2>
+            <div class="access-method">
+                <p><strong>Development → Testing → Production</strong></p>
+                <p>1. Start with <span class="success">ClusterIP</span> for internal development</p>
+                <p>2. Add <span class="warning">NodePort</span> for external testing</p>
+                <p>3. Deploy with <span class="info">LoadBalancer</span> for production</p>
+                <p>4. Use <span class="external">ExternalName</span> for external service integration</p>
+            </div>
+        </div>
+    </body>
+    </html>

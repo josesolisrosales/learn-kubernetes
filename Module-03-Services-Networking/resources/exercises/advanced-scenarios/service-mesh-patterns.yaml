@@ -1,0 +1,880 @@
+# Advanced Service Mesh Patterns
+# Demonstrates advanced networking patterns including circuit breakers, retries, and traffic management
+# Shows patterns commonly implemented with service mesh solutions like Istio or Linkerd
+
+---
+# Namespace for advanced service mesh patterns
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: service-mesh-patterns
+  labels:
+    purpose: advanced-networking
+    pattern-type: service-mesh
+    istio-injection: enabled  # For service mesh integration
+
+---
+# Circuit Breaker Pattern Implementation
+# Application that demonstrates circuit breaker behavior
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: circuit-breaker-app
+  namespace: service-mesh-patterns
+  labels:
+    app: circuit-breaker-app
+    pattern: circuit-breaker
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: circuit-breaker-app
+  template:
+    metadata:
+      labels:
+        app: circuit-breaker-app
+        pattern: circuit-breaker
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: CIRCUIT_BREAKER_ENABLED
+          value: "true"
+        - name: FAILURE_THRESHOLD
+          value: "5"
+        - name: RECOVERY_TIMEOUT
+          value: "30s"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      - name: circuit-breaker-sidecar
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          echo "Circuit Breaker Sidecar starting..."
+          
+          # Simulate circuit breaker states
+          CIRCUIT_STATE="CLOSED"
+          FAILURE_COUNT=0
+          FAILURE_THRESHOLD=5
+          
+          while true; do
+            case $CIRCUIT_STATE in
+              "CLOSED")
+                echo "Circuit CLOSED - Normal operation"
+                if [ $FAILURE_COUNT -ge $FAILURE_THRESHOLD ]; then
+                  CIRCUIT_STATE="OPEN"
+                  echo "Circuit OPENED due to failures: $FAILURE_COUNT"
+                fi
+                ;;
+              "OPEN")
+                echo "Circuit OPEN - Failing fast"
+                sleep 30
+                CIRCUIT_STATE="HALF_OPEN"
+                FAILURE_COUNT=0
+                echo "Circuit HALF_OPEN - Testing recovery"
+                ;;
+              "HALF_OPEN")
+                echo "Circuit HALF_OPEN - Testing requests"
+                sleep 10
+                # Simulate successful recovery
+                CIRCUIT_STATE="CLOSED"
+                echo "Circuit CLOSED - Recovery successful"
+                ;;
+            esac
+            
+            # Simulate random failures
+            if [ $((RANDOM % 10)) -eq 0 ]; then
+              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+              echo "Simulated failure detected. Count: $FAILURE_COUNT"
+            fi
+            
+            sleep 5
+          done
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "25m"
+      volumes:
+      - name: app-config
+        configMap:
+          name: circuit-breaker-config
+
+---
+# Retry Pattern Implementation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retry-pattern-app
+  namespace: service-mesh-patterns
+  labels:
+    app: retry-pattern-app
+    pattern: retry-logic
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: retry-pattern-app
+  template:
+    metadata:
+      labels:
+        app: retry-pattern-app
+        pattern: retry-logic
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 9090
+          name: http
+        volumeMounts:
+        - name: retry-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: MAX_RETRIES
+          value: "3"
+        - name: RETRY_DELAY
+          value: "1s"
+        - name: EXPONENTIAL_BACKOFF
+          value: "true"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      - name: retry-handler
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          echo "Retry Handler Sidecar starting..."
+          
+          while true; do
+            echo "Monitoring retry patterns..."
+            echo "Max retries: $MAX_RETRIES"
+            echo "Retry delay: $RETRY_DELAY"
+            echo "Exponential backoff: $EXPONENTIAL_BACKOFF"
+            
+            # Simulate retry statistics
+            SUCCESS_RATE=$((70 + RANDOM % 30))
+            RETRY_RATE=$((RANDOM % 20))
+            
+            echo "Current success rate: ${SUCCESS_RATE}%"
+            echo "Current retry rate: ${RETRY_RATE}%"
+            
+            sleep 30
+          done
+        env:
+        - name: MAX_RETRIES
+          value: "3"
+        - name: RETRY_DELAY
+          value: "1s"
+        - name: EXPONENTIAL_BACKOFF
+          value: "true"
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+      volumes:
+      - name: retry-config
+        configMap:
+          name: retry-pattern-config
+
+---
+# Load Balancing with Health Checks
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-balanced-app
+  namespace: service-mesh-patterns
+  labels:
+    app: load-balanced-app
+    pattern: load-balancing
+    version: v1
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: load-balanced-app
+  template:
+    metadata:
+      labels:
+        app: load-balanced-app
+        pattern: load-balancing
+        version: v1
+      annotations:
+        load-balancer.kubernetes.io/algorithm: "round-robin"
+        load-balancer.kubernetes.io/health-check: "enabled"
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 7070
+          name: http
+        volumeMounts:
+        - name: lb-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: INSTANCE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: LOAD_BALANCER_ALGORITHM
+          value: "round-robin"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 7070
+          initialDelaySeconds: 5
+          periodSeconds: 3
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 7070
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: lb-config
+        configMap:
+          name: load-balancer-config
+
+---
+# Traffic Splitting/Canary Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary-app-v1
+  namespace: service-mesh-patterns
+  labels:
+    app: canary-app
+    version: v1
+    pattern: canary-deployment
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: canary-app
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: canary-app
+        version: v1
+        pattern: canary-deployment
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 6060
+          name: http
+        volumeMounts:
+        - name: canary-v1-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: APP_VERSION
+          value: "v1"
+        - name: TRAFFIC_WEIGHT
+          value: "80"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+      volumes:
+      - name: canary-v1-config
+        configMap:
+          name: canary-v1-config
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary-app-v2
+  namespace: service-mesh-patterns
+  labels:
+    app: canary-app
+    version: v2
+    pattern: canary-deployment
+spec:
+  replicas: 1  # Smaller replica count for canary
+  selector:
+    matchLabels:
+      app: canary-app
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: canary-app
+        version: v2
+        pattern: canary-deployment
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 6060
+          name: http
+        volumeMounts:
+        - name: canary-v2-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: APP_VERSION
+          value: "v2"
+        - name: TRAFFIC_WEIGHT
+          value: "20"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+      volumes:
+      - name: canary-v2-config
+        configMap:
+          name: canary-v2-config
+
+---
+# Rate Limiting Pattern
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rate-limited-app
+  namespace: service-mesh-patterns
+  labels:
+    app: rate-limited-app
+    pattern: rate-limiting
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rate-limited-app
+  template:
+    metadata:
+      labels:
+        app: rate-limited-app
+        pattern: rate-limiting
+      annotations:
+        rate-limit.kubernetes.io/enabled: "true"
+        rate-limit.kubernetes.io/requests-per-second: "100"
+        rate-limit.kubernetes.io/burst: "200"
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 5050
+          name: http
+        volumeMounts:
+        - name: rate-limit-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+      - name: rate-limiter
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          echo "Rate Limiter starting..."
+          
+          REQUESTS_PER_SECOND=100
+          BURST_SIZE=200
+          CURRENT_REQUESTS=0
+          
+          while true; do
+            # Simulate rate limiting logic
+            CURRENT_REQUESTS=$((RANDOM % 150))
+            
+            if [ $CURRENT_REQUESTS -gt $REQUESTS_PER_SECOND ]; then
+              if [ $CURRENT_REQUESTS -gt $BURST_SIZE ]; then
+                echo "RATE LIMIT EXCEEDED: $CURRENT_REQUESTS req/s (limit: $REQUESTS_PER_SECOND, burst: $BURST_SIZE)"
+              else
+                echo "BURST MODE: $CURRENT_REQUESTS req/s (using burst capacity)"
+              fi
+            else
+              echo "NORMAL: $CURRENT_REQUESTS req/s (limit: $REQUESTS_PER_SECOND)"
+            fi
+            
+            sleep 10
+          done
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+      volumes:
+      - name: rate-limit-config
+        configMap:
+          name: rate-limit-config
+
+---
+# Services for each pattern
+apiVersion: v1
+kind: Service
+metadata:
+  name: circuit-breaker-service
+  namespace: service-mesh-patterns
+  labels:
+    pattern: circuit-breaker
+spec:
+  type: ClusterIP
+  selector:
+    app: circuit-breaker-app
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: retry-pattern-service
+  namespace: service-mesh-patterns
+  labels:
+    pattern: retry-logic
+spec:
+  type: ClusterIP
+  selector:
+    app: retry-pattern-app
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-balanced-service
+  namespace: service-mesh-patterns
+  labels:
+    pattern: load-balancing
+  annotations:
+    service.kubernetes.io/load-balancer-algorithm: "round-robin"
+spec:
+  type: ClusterIP
+  selector:
+    app: load-balanced-app
+  ports:
+  - name: http
+    port: 7070
+    targetPort: 7070
+  sessionAffinity: None
+
+---
+# Canary service (combines both versions)
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-service
+  namespace: service-mesh-patterns
+  labels:
+    pattern: canary-deployment
+spec:
+  type: ClusterIP
+  selector:
+    app: canary-app  # Selects both v1 and v2
+  ports:
+  - name: http
+    port: 6060
+    targetPort: 6060
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rate-limited-service
+  namespace: service-mesh-patterns
+  labels:
+    pattern: rate-limiting
+spec:
+  type: ClusterIP
+  selector:
+    app: rate-limited-app
+  ports:
+  - name: http
+    port: 5050
+    targetPort: 5050
+
+---
+# ConfigMaps for each pattern
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: circuit-breaker-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        
+        add_header X-Pattern "circuit-breaker" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Circuit-State "CLOSED" always;
+        
+        location / {
+            return 200 '{"pattern":"circuit-breaker","status":"operational","circuit_state":"CLOSED","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            # Simulate intermittent failures for circuit breaker testing
+            if ($time_iso8601 ~ ".*[13579]$") {
+                return 503 '{"status":"unhealthy","reason":"simulated_failure","circuit_action":"increment_counter"}';
+            }
+            return 200 '{"status":"healthy","circuit_state":"operational"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /fail {
+            return 503 '{"status":"failure","circuit_action":"trigger"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /metrics {
+            return 200 '{"circuit_breaker_state":"CLOSED","failure_count":0,"success_rate":"95%","last_failure":"none"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retry-pattern-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    server {
+        listen 9090;
+        server_name _;
+        
+        add_header X-Pattern "retry-logic" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Max-Retries "3" always;
+        
+        location / {
+            return 200 '{"pattern":"retry-logic","max_retries":3,"retry_delay":"1s","exponential_backoff":true,"pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","retry_stats":{"success_rate":"90%","avg_retries":"1.2"}}';
+            add_header Content-Type application/json;
+        }
+        
+        location /unstable {
+            # Simulate 70% success rate requiring retries
+            if ($time_iso8601 ~ ".*[0-2]$") {
+                return 503 '{"status":"temporary_failure","retry_recommended":true}';
+            }
+            return 200 '{"status":"success_after_retry","attempts":2}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-balancer-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    server {
+        listen 7070;
+        server_name _;
+        
+        add_header X-Pattern "load-balancing" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Load-Balancer "round-robin" always;
+        
+        location / {
+            return 200 '{"pattern":"load-balancing","algorithm":"round-robin","instance":"$hostname","health":"healthy"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","instance":"$hostname","load_metric":"low"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /load {
+            # Simulate variable load
+            set $load_value "medium";
+            if ($time_iso8601 ~ ".*[0-3]$") {
+                set $load_value "low";
+            }
+            if ($time_iso8601 ~ ".*[8-9]$") {
+                set $load_value "high";
+            }
+            return 200 '{"instance":"$hostname","current_load":"$load_value","connections":42}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-v1-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    server {
+        listen 6060;
+        server_name _;
+        
+        add_header X-Pattern "canary-deployment" always;
+        add_header X-Version "v1" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Traffic-Weight "80%" always;
+        
+        location / {
+            return 200 '{"pattern":"canary-deployment","version":"v1","traffic_weight":"80%","features":["basic_ui","core_api"],"pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","version":"v1","stable":true}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-v2-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    server {
+        listen 6060;
+        server_name _;
+        
+        add_header X-Pattern "canary-deployment" always;
+        add_header X-Version "v2" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Traffic-Weight "20%" always;
+        
+        location / {
+            return 200 '{"pattern":"canary-deployment","version":"v2","traffic_weight":"20%","features":["basic_ui","core_api","new_feature","enhanced_ui"],"pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","version":"v2","canary":true}';
+            add_header Content-Type application/json;
+        }
+        
+        location /new-feature {
+            return 200 '{"feature":"new_functionality","version":"v2","status":"experimental","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rate-limit-config
+  namespace: service-mesh-patterns
+data:
+  default.conf: |
+    limit_req_zone $binary_remote_addr zone=api:10m rate=100r/s;
+    limit_req_zone $binary_remote_addr zone=burst:10m rate=200r/s;
+    
+    server {
+        listen 5050;
+        server_name _;
+        
+        add_header X-Pattern "rate-limiting" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Rate-Limit "100req/s" always;
+        
+        location / {
+            limit_req zone=api burst=50 nodelay;
+            limit_req_status 429;
+            
+            return 200 '{"pattern":"rate-limiting","rate_limit":"100req/s","burst":"200req/s","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","rate_limiter":"active"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /metrics {
+            return 200 '{"current_requests_per_second":75,"rate_limit_hits":12,"burst_usage":"30%"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# Ingress for external access to all patterns
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: service-mesh-patterns-ingress
+  namespace: service-mesh-patterns
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Service-Mesh-Patterns "enabled" always;
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: patterns.example.com
+    http:
+      paths:
+      - path: /circuit-breaker
+        pathType: Prefix
+        backend:
+          service:
+            name: circuit-breaker-service
+            port:
+              number: 8080
+      - path: /retry
+        pathType: Prefix
+        backend:
+          service:
+            name: retry-pattern-service
+            port:
+              number: 9090
+      - path: /load-balancer
+        pathType: Prefix
+        backend:
+          service:
+            name: load-balanced-service
+            port:
+              number: 7070
+      - path: /canary
+        pathType: Prefix
+        backend:
+          service:
+            name: canary-service
+            port:
+              number: 6060
+      - path: /rate-limit
+        pathType: Prefix
+        backend:
+          service:
+            name: rate-limited-service
+            port:
+              number: 5050
+
+---
+# Test client for pattern validation
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pattern-test-client
+  namespace: service-mesh-patterns
+  labels:
+    role: testing
+    pattern: client
+spec:
+  containers:
+  - name: test-tools
+    image: alpine:3.18
+    command:
+    - sh
+    - -c
+    - |
+      apk add --no-cache curl jq wrk
+      echo "Service Mesh Pattern Test Client Ready"
+      
+      echo "=== Testing Circuit Breaker ==="
+      for i in {1..10}; do
+        curl -s http://circuit-breaker-service:8080/health | jq .
+        sleep 2
+      done
+      
+      echo "=== Testing Retry Logic ==="
+      for i in {1..5}; do
+        curl -s http://retry-pattern-service:9090/unstable | jq .
+        sleep 1
+      done
+      
+      echo "=== Testing Load Balancer ==="
+      for i in {1..10}; do
+        curl -s http://load-balanced-service:7070/ | jq .pod
+      done
+      
+      echo "=== Testing Canary Deployment ==="
+      for i in {1..20}; do
+        curl -s http://canary-service:6060/ | jq .version
+      done
+      
+      sleep 3600
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+  restartPolicy: Never

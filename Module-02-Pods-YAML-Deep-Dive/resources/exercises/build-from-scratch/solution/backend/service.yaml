@@ -1,0 +1,97 @@
+# Backend API Services - E-commerce Platform
+
+---
+# Main ClusterIP Service for API
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-service
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+  annotations:
+    service.kubernetes.io/description: "Backend API service for internal communication"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9100"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: https
+    port: 8443
+    targetPort: 8443
+    protocol: TCP
+  - name: metrics
+    port: 9100
+    targetPort: 9100
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Headless Service for direct pod access
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-headless
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+    service-type: headless
+  annotations:
+    service.kubernetes.io/description: "Headless service for direct backend pod access"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9100
+    targetPort: 9100
+    protocol: TCP
+
+---
+# NodePort Service for development access
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-nodeport
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+    exposure: nodeport
+  annotations:
+    service.kubernetes.io/description: "NodePort service for development access to backend API"
+spec:
+  type: NodePort
+  selector:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30808
+    protocol: TCP
+  sessionAffinity: None

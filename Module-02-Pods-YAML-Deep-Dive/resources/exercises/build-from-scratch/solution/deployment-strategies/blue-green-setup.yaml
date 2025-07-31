@@ -1,0 +1,698 @@
+# Blue-Green Deployment Strategy - E-commerce Platform
+# Demonstrates blue-green deployment pattern for zero-downtime deployments
+# Maintains two identical environments and switches traffic instantly
+
+---
+# Blue Environment - Current Production
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-blue
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: blue
+    version: v1.0.0
+  annotations:
+    deployment.kubernetes.io/description: "Blue environment - current production"
+    deployment.strategy: "blue-green"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ecommerce-platform
+      component: frontend
+      tier: presentation
+      environment: blue
+  template:
+    metadata:
+      labels:
+        app: ecommerce-platform
+        component: frontend
+        tier: presentation
+        environment: blue
+        version: v1.0.0
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: app-content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        env:
+        - name: ENVIRONMENT_COLOR
+          value: "BLUE"
+        - name: APP_VERSION
+          value: "v1.0.0"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: app-config
+        configMap:
+          name: frontend-blue-config
+      - name: app-content
+        configMap:
+          name: frontend-blue-content
+
+---
+# Green Environment - New Version for Testing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-green
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: green
+    version: v1.1.0
+  annotations:
+    deployment.kubernetes.io/description: "Green environment - new version for testing"
+    deployment.strategy: "blue-green"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ecommerce-platform
+      component: frontend
+      tier: presentation
+      environment: green
+  template:
+    metadata:
+      labels:
+        app: ecommerce-platform
+        component: frontend
+        tier: presentation
+        environment: green
+        version: v1.1.0
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: app-content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        env:
+        - name: ENVIRONMENT_COLOR
+          value: "GREEN"
+        - name: APP_VERSION
+          value: "v1.1.0"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: app-config
+        configMap:
+          name: frontend-green-config
+      - name: app-content
+        configMap:
+          name: frontend-green-content
+
+---
+# Production Service - Initially points to Blue
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-production
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    service-type: production
+  annotations:
+    service.kubernetes.io/description: "Production service - points to active environment"
+    blue-green.deployment/active-environment: "blue"
+    blue-green.deployment/switch-method: "label-selector"
+spec:
+  type: LoadBalancer
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: blue  # Switch this to 'green' to switch traffic
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  sessionAffinity: None
+
+---
+# Blue Environment Service (for testing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-blue-service
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: blue
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# Green Environment Service (for testing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-green-service
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: green
+spec:
+  type: ClusterIP
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    environment: green
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# NodePort services for direct testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-blue-nodeport
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    environment: blue
+    exposure: nodeport
+spec:
+  type: NodePort
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    environment: blue
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30180  # Blue on port 30180
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-green-nodeport
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    environment: green
+    exposure: nodeport
+spec:
+  type: NodePort
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    environment: green
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30181  # Green on port 30181
+
+---
+# ConfigMap for Blue Environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-blue-config
+  namespace: ecommerce-platform
+  labels:
+    environment: blue
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Environment "BLUE" always;
+        add_header X-Version "v1.0.0" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Deployment-Strategy "Blue-Green" always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","environment":"blue","version":"v1.0.0","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /version {
+            access_log off;
+            return 200 '{"environment":"blue","version":"v1.0.0","deployment_strategy":"blue-green","active":true,"pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# ConfigMap for Green Environment  
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-green-config
+  namespace: ecommerce-platform
+  labels:
+    environment: green
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Environment "GREEN" always;
+        add_header X-Version "v1.1.0" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Deployment-Strategy "Blue-Green" always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","environment":"green","version":"v1.1.0","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /version {
+            access_log off;
+            return 200 '{"environment":"green","version":"v1.1.0","deployment_strategy":"blue-green","active":false,"pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        # New feature only in green environment
+        location /new-feature {
+            access_log off;
+            return 200 '{"message":"This is a new feature in v1.1.0","environment":"green","feature":"enhanced-ui","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# Blue Environment Content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-blue-content
+  namespace: ecommerce-platform
+  labels:
+    environment: blue
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Blue Environment - v1.0.0</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 40px;
+                background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 40px;
+                border-radius: 20px;
+                backdrop-filter: blur(15px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                text-align: center;
+            }
+            .environment-badge {
+                background: #2980b9;
+                padding: 15px 30px;
+                border-radius: 30px;
+                display: inline-block;
+                margin-bottom: 30px;
+                font-weight: bold;
+                font-size: 1.2em;
+                border: 3px solid #74b9ff;
+            }
+            .version-info {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            .test-button {
+                background: #74b9ff;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                cursor: pointer;
+                margin: 10px;
+                font-size: 16px;
+            }
+            .test-button:hover {
+                background: #0984e3;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-family: monospace;
+                text-align: left;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            .feature-list {
+                text-align: left;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+        </style>
+        <script>
+            function testEndpoint(endpoint, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(endpoint)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="environment-badge">🔵 BLUE ENVIRONMENT</div>
+            <h1>Blue-Green Deployment Demo</h1>
+            <h2>Current Production Environment</h2>
+            
+            <div class="version-info">
+                <h3>Environment Information</h3>
+                <p><strong>Environment:</strong> Blue (Production)</p>
+                <p><strong>Version:</strong> v1.0.0</p>
+                <p><strong>Status:</strong> Active Production</p>
+                <p><strong>Deployment Strategy:</strong> Blue-Green</p>
+            </div>
+            
+            <div class="feature-list">
+                <h3>Features in v1.0.0</h3>
+                <ul>
+                    <li>✅ Basic user interface</li>
+                    <li>✅ Core functionality</li>
+                    <li>✅ User authentication</li>
+                    <li>✅ Product catalog</li>
+                    <li>✅ Shopping cart</li>
+                    <li>✅ Order processing</li>
+                </ul>
+            </div>
+            
+            <h3>Test Blue Environment</h3>
+            <button class="test-button" onclick="testEndpoint('/health', 'health-result')">Health Check</button>
+            <button class="test-button" onclick="testEndpoint('/version', 'version-result')">Version Info</button>
+            
+            <div id="health-result" class="test-result" style="display: none;"></div>
+            <div id="version-result" class="test-result" style="display: none;"></div>
+            
+            <h3>Blue-Green Deployment Process</h3>
+            <div class="feature-list">
+                <ol>
+                    <li><strong>Deploy Green:</strong> Deploy new version to green environment</li>
+                    <li><strong>Test Green:</strong> Thoroughly test green environment</li>
+                    <li><strong>Switch Traffic:</strong> Update service selector to point to green</li>
+                    <li><strong>Monitor:</strong> Monitor application health and performance</li>
+                    <li><strong>Rollback:</strong> Switch back to blue if issues occur</li>
+                </ol>
+            </div>
+            
+            <h3>Environment Access</h3>
+            <div class="feature-list">
+                <p><strong>Production (LoadBalancer):</strong> Points to active environment</p>
+                <p><strong>Blue Direct Access:</strong> NodePort 30180</p>
+                <p><strong>Green Direct Access:</strong> NodePort 30181</p>
+                <p><strong>Blue ClusterIP:</strong> frontend-blue-service:80</p>
+                <p><strong>Green ClusterIP:</strong> frontend-green-service:80</p>
+            </div>
+        </div>
+    </body>
+    </html>
+
+---
+# Green Environment Content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-green-content
+  namespace: ecommerce-platform
+  labels:
+    environment: green
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Green Environment - v1.1.0</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 40px;
+                background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 40px;
+                border-radius: 20px;
+                backdrop-filter: blur(15px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                text-align: center;
+            }
+            .environment-badge {
+                background: #00a085;
+                padding: 15px 30px;
+                border-radius: 30px;
+                display: inline-block;
+                margin-bottom: 30px;
+                font-weight: bold;
+                font-size: 1.2em;
+                border: 3px solid #55efc4;
+            }
+            .version-info {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            .test-button {
+                background: #55efc4;
+                color: #2d3436;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                cursor: pointer;
+                margin: 10px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            .test-button:hover {
+                background: #00b894;
+                color: white;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-family: monospace;
+                text-align: left;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            .feature-list {
+                text-align: left;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            .new-feature {
+                background: rgba(255, 184, 77, 0.3);
+                padding: 15px;
+                border-radius: 8px;
+                margin: 10px 0;
+                border-left: 4px solid #fdcb6e;
+            }
+        </style>
+        <script>
+            function testEndpoint(endpoint, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(endpoint)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="environment-badge">🟢 GREEN ENVIRONMENT</div>
+            <h1>Blue-Green Deployment Demo</h1>
+            <h2>New Version Testing Environment</h2>
+            
+            <div class="version-info">
+                <h3>Environment Information</h3>
+                <p><strong>Environment:</strong> Green (Staging)</p>
+                <p><strong>Version:</strong> v1.1.0</p>
+                <p><strong>Status:</strong> Ready for Production</p>
+                <p><strong>Deployment Strategy:</strong> Blue-Green</p>
+            </div>
+            
+            <div class="feature-list">
+                <h3>Features in v1.1.0</h3>
+                <ul>
+                    <li>✅ Basic user interface</li>
+                    <li>✅ Core functionality</li>
+                    <li>✅ User authentication</li>
+                    <li>✅ Product catalog</li>
+                    <li>✅ Shopping cart</li>
+                    <li>✅ Order processing</li>
+                    <li class="new-feature">🆕 Enhanced user interface</li>
+                    <li class="new-feature">🆕 Advanced search functionality</li>
+                    <li class="new-feature">🆕 Real-time notifications</li>
+                    <li class="new-feature">🆕 Performance improvements</li>
+                </ul>
+            </div>
+            
+            <h3>Test Green Environment</h3>
+            <button class="test-button" onclick="testEndpoint('/health', 'health-result')">Health Check</button>
+            <button class="test-button" onclick="testEndpoint('/version', 'version-result')">Version Info</button>
+            <button class="test-button" onclick="testEndpoint('/new-feature', 'feature-result')">New Feature</button>
+            
+            <div id="health-result" class="test-result" style="display: none;"></div>
+            <div id="version-result" class="test-result" style="display: none;"></div>
+            <div id="feature-result" class="test-result" style="display: none;"></div>
+            
+            <h3>Deployment Commands</h3>
+            <div class="feature-list">
+                <h4>1. Test Green Environment</h4>
+                <pre style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; font-size: 12px;">
+# Test green environment directly
+kubectl get pods -n ecommerce-platform -l environment=green
+curl http://&lt;NODE-IP&gt;:30181
+kubectl port-forward service/frontend-green-service 8081:80</pre>
+                
+                <h4>2. Switch Traffic to Green</h4>
+                <pre style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; font-size: 12px;">
+# Update production service to point to green
+kubectl patch service frontend-production -n ecommerce-platform -p '{"spec":{"selector":{"environment":"green"}}}'</pre>
+                
+                <h4>3. Rollback to Blue (if needed)</h4>
+                <pre style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; font-size: 12px;">
+# Rollback production service to blue
+kubectl patch service frontend-production -n ecommerce-platform -p '{"spec":{"selector":{"environment":"blue"}}}'</pre>
+            </div>
+            
+            <div class="new-feature">
+                <h4>🚀 Ready for Production!</h4>
+                <p>This green environment has been tested and is ready to receive production traffic. Use the commands above to switch traffic from blue to green.</p>
+            </div>
+        </div>
+    </body>
+    </html>

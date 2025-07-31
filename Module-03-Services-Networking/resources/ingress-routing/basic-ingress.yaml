@@ -1,0 +1,634 @@
+# Basic Ingress Example
+# Demonstrates fundamental Ingress concepts and HTTP routing
+# Shows how to expose services via HTTP/HTTPS with domain-based routing
+# Requires an Ingress Controller (nginx, traefik, etc.) to be installed
+
+---
+# Namespace for basic ingress demonstration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: basic-ingress-demo
+  labels:
+    purpose: ingress-basics
+    ingress-controller: nginx
+
+---
+# Backend application deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-backend
+  namespace: basic-ingress-demo
+  labels:
+    app: demo-backend
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demo-backend
+  template:
+    metadata:
+      labels:
+        app: demo-backend
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: app-content
+          mountPath: /usr/share/nginx/html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: app-config
+        configMap:
+          name: demo-backend-config
+      - name: app-content
+        configMap:
+          name: demo-backend-content
+
+---
+# ClusterIP Service for the backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-backend-service
+  namespace: basic-ingress-demo
+  labels:
+    app: demo-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: demo-backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# Basic Ingress Resource
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: basic-ingress
+  namespace: basic-ingress-demo
+  labels:
+    app: demo-backend
+  annotations:
+    # Nginx Ingress Controller specific annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Add CORS headers for browser testing
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range"
+    # Custom headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Ingress-Type "Basic" always;
+      add_header X-Served-By "Nginx-Ingress" always;
+spec:
+  # Ingress class (specify which ingress controller to use)
+  ingressClassName: nginx
+  # Define routing rules
+  rules:
+  - host: demo.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-backend-service
+            port:
+              number: 80
+  # Optional: Default backend for unmatched requests
+  defaultBackend:
+    service:
+      name: demo-backend-service
+      port:
+        number: 80
+
+---
+# Ingress with multiple hosts
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-host-ingress
+  namespace: basic-ingress-demo
+  labels:
+    app: demo-backend
+    variant: multi-host
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Ingress-Type "Multi-Host" always;
+      add_header X-Host-Matched "$host" always;
+spec:
+  ingressClassName: nginx
+  rules:
+  # Primary domain
+  - host: app.example.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-backend-service
+            port:
+              number: 80
+  # Alternative domain
+  - host: application.example.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-backend-service
+            port:
+              number: 80
+  # Wildcard subdomain
+  - host: "*.demo.local"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-backend-service
+            port:
+              number: 80
+
+---
+# Test client pod for internal testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ingress-test-client
+  namespace: basic-ingress-demo
+  labels:
+    role: test-client
+spec:
+  containers:
+  - name: client
+    image: alpine:3.18
+    command: 
+    - sh
+    - -c
+    - |
+      apk add --no-cache curl
+      sleep 3600
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+
+---
+# ConfigMap for nginx backend configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-backend-config
+  namespace: basic-ingress-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        # Add headers to show ingress information
+        add_header X-Backend-Pod $hostname;
+        add_header X-Request-ID $request_id;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Ingress info endpoint
+        location /ingress-info {
+            access_log off;
+            return 200 "{\"backend_pod\": \"$hostname\", \"ingress_type\": \"basic\", \"request_id\": \"$request_id\", \"timestamp\": \"$time_iso8601\"}\n";
+            add_header Content-Type application/json;
+        }
+
+        # Headers debug endpoint
+        location /headers {
+            access_log off;
+            return 200 "Host: $host\nX-Real-IP: $http_x_real_ip\nX-Forwarded-For: $http_x_forwarded_for\nX-Forwarded-Proto: $http_x_forwarded_proto\nX-Forwarded-Host: $http_x_forwarded_host\nUser-Agent: $http_user_agent\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Request path info
+        location /path-info {
+            access_log off;
+            return 200 "{\"uri\": \"$uri\", \"request_uri\": \"$request_uri\", \"query_string\": \"$query_string\", \"method\": \"$request_method\"}\n";
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# ConfigMap for web content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-backend-content
+  namespace: basic-ingress-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Basic Ingress Demo</title>
+        <style>
+            body {
+                font-family: 'Arial', sans-serif;
+                margin: 0;
+                padding: 40px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 1000px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 40px;
+                border-radius: 20px;
+                backdrop-filter: blur(15px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .ingress-type {
+                background: #FF6B6B;
+                padding: 12px 24px;
+                border-radius: 30px;
+                display: inline-block;
+                margin-bottom: 30px;
+                font-weight: bold;
+                font-size: 1.1em;
+            }
+            .info-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 25px;
+                margin: 30px 0;
+            }
+            .info-card {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 25px;
+                border-radius: 15px;
+                border-left: 5px solid #FF6B6B;
+                transition: transform 0.3s ease;
+            }
+            .info-card:hover {
+                transform: translateY(-5px);
+            }
+            .routing-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 25px 0;
+                background: rgba(255, 255, 255, 0.9);
+                color: #333;
+                border-radius: 10px;
+                overflow: hidden;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+            }
+            .routing-table th, .routing-table td {
+                padding: 15px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+            .routing-table th {
+                background: #FF6B6B;
+                color: white;
+                font-weight: bold;
+            }
+            .routing-table tr:hover {
+                background: #f5f5f5;
+            }
+            .endpoint {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 18px;
+                border-radius: 10px;
+                margin: 15px 0;
+                border-left: 4px solid #4ECDC4;
+            }
+            .command {
+                background: #2c3e50;
+                color: #ecf0f1;
+                padding: 20px;
+                border-radius: 10px;
+                font-family: 'Courier New', monospace;
+                margin: 15px 0;
+                overflow-x: auto;
+                border-left: 4px solid #3498db;
+            }
+            .test-section {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 25px;
+                border-radius: 12px;
+                margin: 25px 0;
+                border-top: 3px solid #4ECDC4;
+            }
+            .status-check {
+                background: rgba(52, 152, 219, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                border-left: 4px solid #3498db;
+            }
+            .success { color: #2ecc71; font-weight: bold; }
+            .warning { color: #f39c12; font-weight: bold; }
+            .info { color: #3498db; font-weight: bold; }
+            .test-button {
+                background: #3498db;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 14px;
+                margin: 5px;
+            }
+            .test-button:hover {
+                background: #2980b9;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 15px;
+                border-radius: 8px;
+                margin: 15px 0;
+                font-family: monospace;
+                font-size: 14px;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+        </style>
+        <script>
+            function updateIngressInfo() {
+                document.getElementById('current-host').innerHTML = window.location.host;
+                document.getElementById('current-url').innerHTML = window.location.href;
+                document.getElementById('protocol').innerHTML = window.location.protocol;
+                
+                // Check if accessed via ingress
+                const hostname = window.location.hostname;
+                const isIngress = hostname.includes('.local') || hostname.includes('.example');
+                document.getElementById('ingress-status').innerHTML = isIngress ? 
+                    '<span class="success">✅ Accessed via Ingress</span>' : 
+                    '<span class="warning">⚠️ Direct access (not via Ingress)</span>';
+            }
+            
+            function testEndpoint(endpoint, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(endpoint)
+                    .then(response => response.text())
+                    .then(data => {
+                        resultDiv.innerHTML = '<pre>' + data + '</pre>';
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = '<span style="color: #e74c3c;">Error: ' + error.message + '</span>';
+                    });
+            }
+            
+            function testHeaders() {
+                testEndpoint('/headers', 'headers-result');
+            }
+            
+            function testIngressInfo() {
+                testEndpoint('/ingress-info', 'ingress-info-result');
+            }
+            
+            function testPathInfo() {
+                testEndpoint('/path-info', 'path-info-result');
+            }
+            
+            window.onload = updateIngressInfo;
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="ingress-type">🌐 Basic Ingress</div>
+            <h1>Basic Ingress Demonstration</h1>
+            
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Ingress Controller</h3>
+                    <p><strong>Nginx Ingress</strong> - Layer 7 load balancing and routing</p>
+                </div>
+                <div class="info-card">
+                    <h3>Routing Method</h3>
+                    <p><strong>Host-based</strong> - Routes traffic based on Host header</p>
+                </div>
+                <div class="info-card">
+                    <h3>Path Type</h3>
+                    <p><strong>Prefix</strong> - Matches path prefixes</p>
+                </div>
+                <div class="info-card">
+                    <h3>Backend Service</h3>
+                    <p><strong>ClusterIP</strong> - Internal service with load balancing</p>
+                </div>
+            </div>
+
+            <div class="status-check">
+                <h3>🔍 Current Access Information</h3>
+                <p><strong>Host:</strong> <span id="current-host"></span></p>
+                <p><strong>URL:</strong> <span id="current-url"></span></p>
+                <p><strong>Protocol:</strong> <span id="protocol"></span></p>
+                <p><strong>Status:</strong> <span id="ingress-status"></span></p>
+            </div>
+
+            <h3>🗺️ Ingress Routing Rules</h3>
+            <table class="routing-table">
+                <thead>
+                    <tr>
+                        <th>Ingress Name</th>
+                        <th>Host</th>
+                        <th>Path</th>
+                        <th>Path Type</th>
+                        <th>Backend Service</th>
+                        <th>Port</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>basic-ingress</td>
+                        <td>demo.local</td>
+                        <td>/</td>
+                        <td>Prefix</td>
+                        <td>demo-backend-service</td>
+                        <td>80</td>
+                    </tr>
+                    <tr>
+                        <td>multi-host-ingress</td>
+                        <td>app.example.local</td>
+                        <td>/</td>
+                        <td>Prefix</td>
+                        <td>demo-backend-service</td>
+                        <td>80</td>
+                    </tr>
+                    <tr>
+                        <td>multi-host-ingress</td>
+                        <td>application.example.local</td>
+                        <td>/</td>
+                        <td>Prefix</td>
+                        <td>demo-backend-service</td>
+                        <td>80</td>
+                    </tr>
+                    <tr>
+                        <td>multi-host-ingress</td>
+                        <td>*.demo.local</td>
+                        <td>/</td>
+                        <td>Prefix</td>
+                        <td>demo-backend-service</td>
+                        <td>80</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>🔍 Available Endpoints</h3>
+            <div class="endpoint">
+                <strong>GET /</strong> - This landing page
+                <button class="test-button" onclick="window.location.reload()">Test</button>
+            </div>
+            <div class="endpoint">
+                <strong>GET /health</strong> - Health check endpoint
+                <button class="test-button" onclick="testEndpoint('/health', 'health-result')">Test</button>
+                <div id="health-result" class="test-result" style="display: none;"></div>
+            </div>
+            <div class="endpoint">
+                <strong>GET /ingress-info</strong> - Ingress information (JSON)
+                <button class="test-button" onclick="testIngressInfo()">Test</button>
+                <div id="ingress-info-result" class="test-result" style="display: none;"></div>
+            </div>
+            <div class="endpoint">
+                <strong>GET /headers</strong> - Request headers debug
+                <button class="test-button" onclick="testHeaders()">Test</button>
+                <div id="headers-result" class="test-result" style="display: none;"></div>
+            </div>
+            <div class="endpoint">
+                <strong>GET /path-info</strong> - Path information (JSON)
+                <button class="test-button" onclick="testPathInfo()">Test</button>
+                <div id="path-info-result" class="test-result" style="display: none;"></div>
+            </div>
+
+            <div class="test-section">
+                <h3>🧪 Testing Commands</h3>
+                
+                <h4>1. Check Ingress Resources</h4>
+                <div class="command">kubectl get ingress -n basic-ingress-demo -o wide</div>
+                
+                <h4>2. Describe Ingress Details</h4>
+                <div class="command">kubectl describe ingress basic-ingress -n basic-ingress-demo</div>
+                
+                <h4>3. Test Local DNS Resolution (if /etc/hosts configured)</h4>
+                <div class="command">curl http://demo.local
+curl http://app.example.local
+curl http://application.example.local</div>
+                
+                <h4>4. Test with Host Header (if no local DNS)</h4>
+                <div class="command"># Get ingress controller IP
+kubectl get service -n ingress-nginx ingress-nginx-controller
+
+# Test with Host header
+curl -H "Host: demo.local" http://&lt;INGRESS-IP&gt;
+curl -H "Host: app.example.local" http://&lt;INGRESS-IP&gt;</div>
+                
+                <h4>5. Test from within cluster</h4>
+                <div class="command">kubectl exec -it ingress-test-client -n basic-ingress-demo -- curl -H "Host: demo.local" http://demo-backend-service</div>
+                
+                <h4>6. Check Ingress Controller Logs</h4>
+                <div class="command">kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx</div>
+            </div>
+
+            <h3>📋 Key Concepts</h3>
+            <ul>
+                <li class="success">✅ <strong>Host-based Routing:</strong> Routes traffic based on HTTP Host header</li>
+                <li class="success">✅ <strong>Path Types:</strong> Prefix, Exact, and ImplementationSpecific</li>
+                <li class="success">✅ <strong>Default Backend:</strong> Handles unmatched requests</li>
+                <li class="success">✅ <strong>Annotations:</strong> Controller-specific configuration</li>
+                <li class="info">ℹ️ <strong>Ingress Class:</strong> Specifies which controller handles the Ingress</li>
+                <li class="warning">⚠️ <strong>DNS Resolution:</strong> Requires proper DNS setup or /etc/hosts entries</li>
+            </ul>
+
+            <h3>⚙️ Setup Requirements</h3>
+            <div class="status-check">
+                <h4>Prerequisites:</h4>
+                <ul>
+                    <li><strong>Ingress Controller:</strong> nginx, traefik, or cloud provider controller</li>
+                    <li><strong>DNS Configuration:</strong> Point hostnames to Ingress controller IP</li>
+                    <li><strong>Network Access:</strong> Ingress controller must be accessible</li>
+                </ul>
+                
+                <h4>Local Testing Setup:</h4>
+                <div class="command"># Add to /etc/hosts (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows)
+&lt;INGRESS-IP&gt; demo.local
+&lt;INGRESS-IP&gt; app.example.local
+&lt;INGRESS-IP&gt; application.example.local</div>
+            </div>
+
+            <h3>🚀 Next Steps</h3>
+            <p>Ready to explore more advanced Ingress features?</p>
+            <ul>
+                <li><strong>Path-based Routing:</strong> Route different paths to different services</li>
+                <li><strong>SSL/TLS Termination:</strong> Handle HTTPS certificates</li>
+                <li><strong>Advanced Annotations:</strong> Rate limiting, authentication, redirects</li>
+                <li><strong>Multiple Ingress Controllers:</strong> Use different controllers for different purposes</li>
+            </ul>
+        </div>
+        
+        <script>
+            // Show/hide test results
+            document.querySelectorAll('.test-button').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    const resultDiv = this.parentElement.querySelector('.test-result');
+                    if (resultDiv) {
+                        resultDiv.style.display = resultDiv.style.display === 'none' ? 'block' : 'none';
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>

@@ -1,0 +1,382 @@
+# Backend API Configuration - E-commerce Platform
+
+---
+# Main configuration for backend API
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+    config-type: nginx
+  annotations:
+    config.kubernetes.io/description: "Nginx configuration for backend API service"
+data:
+  environment: "development"
+  log-level: "info"
+  database-pool-size: "10"
+  cache-ttl: "300"
+  
+  default.conf: |
+    # Backend API Nginx Configuration
+    upstream database {
+        server database-service:5432;
+        keepalive 8;
+    }
+    
+    # Rate limiting
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+    
+    server {
+        listen 8080;
+        listen 8443 ssl http2;
+        server_name localhost;
+        
+        # SSL configuration (self-signed for demo)
+        ssl_certificate /etc/ssl/certs/server.crt;
+        ssl_certificate_key /etc/ssl/private/server.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS;
+        
+        # Security headers
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        
+        # Custom headers for identification
+        add_header X-Service-Type "Backend-API" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Request-ID $request_id always;
+        add_header X-API-Version "v1.0.0" always;
+        
+        # Enable gzip for JSON responses
+        gzip on;
+        gzip_types application/json application/xml text/xml;
+        
+        # CORS headers for frontend integration
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization" always;
+        
+        # Handle preflight requests
+        if ($request_method = 'OPTIONS') {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization" always;
+            add_header Access-Control-Max-Age 1728000;
+            add_header Content-Type 'text/plain; charset=utf-8';
+            add_header Content-Length 0;
+            return 204;
+        }
+        
+        # Root endpoint - API documentation
+        location = / {
+            return 200 '{"service":"ecommerce-backend-api","version":"v1.0.0","endpoints":["/api/users","/api/products","/api/orders","/api/health","/api/ready","/api/metrics"],"documentation":"https://api-docs.company.com"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Health check endpoint
+        location /api/health {
+            access_log off;
+            limit_req zone=api burst=20 nodelay;
+            
+            # Check circuit breaker state
+            set $circuit_state "CLOSED";
+            if (-f /app/data/circuit-breaker-state) {
+                set_by_lua_block $circuit_state {
+                    local file = io.open("/app/data/circuit-breaker-state", "r")
+                    if file then
+                        local content = file:read("*all")
+                        file:close()
+                        return string.gsub(content, "%s+", "")
+                    end
+                    return "CLOSED"
+                }
+            }
+            
+            return 200 '{"status":"healthy","service":"backend-api","pod":"$hostname","timestamp":"$time_iso8601","uptime":"$upstream_response_time","circuit_breaker":"$circuit_state","database_status":"connected"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Readiness check endpoint
+        location /api/ready {
+            access_log off;
+            return 200 '{"status":"ready","service":"backend-api","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Database health check
+        location /api/database/health {
+            access_log off;
+            return 200 '{"status":"connected","database":"postgresql","host":"database-service","port":5432,"timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Users API endpoints
+        location /api/users {
+            limit_req zone=api burst=10 nodelay;
+            
+            if ($request_method = GET) {
+                access_log off;
+                return 200 '{"users":[{"id":1,"name":"John Doe","email":"john@example.com","role":"customer","status":"active"},{"id":2,"name":"Jane Smith","email":"jane@example.com","role":"admin","status":"active"},{"id":3,"name":"Bob Johnson","email":"bob@example.com","role":"customer","status":"active"}],"total":3,"page":1,"timestamp":"$time_iso8601","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+            
+            if ($request_method = POST) {
+                access_log off;
+                return 201 '{"message":"User created successfully","id":4,"timestamp":"$time_iso8601","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+        }
+        
+        # Products API endpoints
+        location /api/products {
+            limit_req zone=api burst=10 nodelay;
+            
+            if ($request_method = GET) {
+                access_log off;
+                return 200 '{"products":[{"id":1,"name":"Laptop","price":999.99,"category":"Electronics","stock":50},{"id":2,"name":"Smartphone","price":599.99,"category":"Electronics","stock":100},{"id":3,"name":"Headphones","price":199.99,"category":"Electronics","stock":75}],"total":3,"page":1,"timestamp":"$time_iso8601","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+        }
+        
+        # Orders API endpoints
+        location /api/orders {
+            limit_req zone=api burst=5 nodelay;
+            
+            if ($request_method = GET) {
+                access_log off;
+                return 200 '{"orders":[{"id":1,"customer":"John Doe","total":999.99,"status":"completed","date":"2024-01-15"},{"id":2,"customer":"Jane Smith","total":599.99,"status":"processing","date":"2024-01-16"},{"id":3,"customer":"Bob Johnson","total":199.99,"status":"shipped","date":"2024-01-17"}],"total":3,"page":1,"timestamp":"$time_iso8601","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+            
+            if ($request_method = POST) {
+                access_log off;
+                return 201 '{"message":"Order created successfully","order_id":4,"total":299.99,"status":"pending","timestamp":"$time_iso8601","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+        }
+        
+        # Authentication endpoints
+        location /api/auth {
+            limit_req zone=auth burst=3 nodelay;
+            
+            location /api/auth/login {
+                if ($request_method = POST) {
+                    return 200 '{"token":"jwt-token-here","user_id":1,"expires_in":3600,"timestamp":"$time_iso8601"}';
+                    add_header Content-Type application/json;
+                }
+            }
+            
+            location /api/auth/logout {
+                if ($request_method = POST) {
+                    return 200 '{"message":"Logged out successfully","timestamp":"$time_iso8601"}';
+                    add_header Content-Type application/json;
+                }
+            }
+        }
+        
+        # Configuration endpoint
+        location /api/config {
+            access_log off;
+            return 200 '{"environment":"$environment","database_pool_size":"$database_pool_size","cache_ttl":"$cache_ttl","log_level":"$log_level","version":"v1.0.0","features":{"authentication":true,"rate_limiting":true,"circuit_breaker":true}}';
+            add_header Content-Type application/json;
+        }
+        
+        # Metrics endpoint for Prometheus
+        location /api/metrics {
+            access_log off;
+            return 200 '# HELP api_requests_total Total number of API requests\n# TYPE api_requests_total counter\napi_requests_total{method="GET",endpoint="/api/users"} 42\napi_requests_total{method="GET",endpoint="/api/products"} 38\napi_requests_total{method="GET",endpoint="/api/orders"} 25\n# HELP api_request_duration_seconds Request duration in seconds\n# TYPE api_request_duration_seconds histogram\napi_request_duration_seconds_bucket{le="0.1"} 89\napi_request_duration_seconds_bucket{le="0.5"} 94\napi_request_duration_seconds_bucket{le="1.0"} 95\napi_request_duration_seconds_bucket{le="+Inf"} 95\napi_request_duration_seconds_sum 8.2\napi_request_duration_seconds_count 95\n';
+            add_header Content-Type text/plain;
+        }
+        
+        # Admin endpoints (restricted)
+        location /api/admin {
+            # IP whitelist for admin access
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 192.168.0.0/16;
+            deny all;
+            
+            location /api/admin/health {
+                return 200 '{"service":"backend-api","status":"healthy","memory_usage":"45%","cpu_usage":"12%","connections":{"active":5,"waiting":2},"uptime":"72h","pod":"$hostname"}';
+                add_header Content-Type application/json;
+            }
+            
+            location /api/admin/stats {
+                return 200 '{"requests_per_minute":120,"error_rate":"0.5%","avg_response_time":"250ms","active_connections":8,"database_connections":3,"cache_hit_rate":"85%"}';
+                add_header Content-Type application/json;
+            }
+        }
+        
+        # Catch-all for undefined endpoints
+        location /api/ {
+            return 404 '{"error":"Endpoint not found","path":"$uri","method":"$request_method","timestamp":"$time_iso8601","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Static files (if any)
+        location /static/ {
+            root /usr/share/nginx/html;
+            expires 1d;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        # Error pages
+        error_page 404 /404.json;
+        error_page 500 502 503 504 /50x.json;
+        
+        location = /404.json {
+            internal;
+            return 404 '{"error":"Not Found","code":404,"message":"The requested resource was not found","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location = /50x.json {
+            internal;
+            return 500 '{"error":"Internal Server Error","code":500,"message":"An internal server error occurred","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# Content configuration for API documentation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-content
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: backend
+    tier: business-logic
+    config-type: content
+  annotations:
+    config.kubernetes.io/description: "Static content for backend API service"
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>E-commerce Backend API</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                max-width: 800px; 
+                margin: 50px auto; 
+                padding: 20px;
+                background: #f5f5f5;
+            }
+            .header { 
+                background: #007bff; 
+                color: white; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin-bottom: 20px;
+            }
+            .endpoint { 
+                background: white; 
+                padding: 15px; 
+                margin: 10px 0; 
+                border-radius: 5px; 
+                border-left: 4px solid #007bff;
+            }
+            .method { 
+                background: #28a745; 
+                color: white; 
+                padding: 3px 8px; 
+                border-radius: 3px; 
+                font-size: 12px;
+            }
+            .method.post { background: #ffc107; color: #000; }
+            .method.put { background: #17a2b8; }
+            .method.delete { background: #dc3545; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🚀 E-commerce Backend API</h1>
+            <p>RESTful API service for the e-commerce platform</p>
+        </div>
+        
+        <h2>Available Endpoints</h2>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/health</strong> - Health check endpoint
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/ready</strong> - Readiness check endpoint
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/users</strong> - List all users
+        </div>
+        
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <strong>/api/users</strong> - Create new user
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/products</strong> - List all products
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/orders</strong> - List all orders
+        </div>
+        
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <strong>/api/orders</strong> - Create new order
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/config</strong> - Get service configuration
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <strong>/api/metrics</strong> - Prometheus metrics
+        </div>
+        
+        <h2>Features</h2>
+        <ul>
+            <li>✅ RESTful API design</li>
+            <li>✅ Health and readiness checks</li>
+            <li>✅ Rate limiting</li>
+            <li>✅ CORS support</li>
+            <li>✅ Security headers</li>
+            <li>✅ Circuit breaker simulation</li>
+            <li>✅ Prometheus metrics</li>
+            <li>✅ Structured logging</li>
+        </ul>
+        
+        <p><strong>Pod:</strong> <span id="pod-name">Loading...</span></p>
+        <p><strong>Version:</strong> v1.0.0</p>
+        
+        <script>
+            fetch('/api/health')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('pod-name').textContent = data.pod || 'Unknown';
+                })
+                .catch(e => console.error('Failed to load pod info'));
+        </script>
+    </body>
+    </html>

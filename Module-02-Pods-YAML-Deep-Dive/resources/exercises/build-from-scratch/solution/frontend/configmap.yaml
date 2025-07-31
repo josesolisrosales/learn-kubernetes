@@ -1,0 +1,708 @@
+# Frontend Configuration - E-commerce Platform
+# Contains nginx configuration and static content
+
+---
+# Nginx Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    config-type: nginx
+  annotations:
+    config.kubernetes.io/description: "Nginx configuration for frontend service"
+data:
+  environment: "development"
+  api_timeout: "30s"
+  cache_duration: "1h"
+  
+  default.conf: |
+    # Nginx configuration for E-commerce Frontend
+    upstream backend_api {
+        server backend-api-service:8080;
+        keepalive 32;
+    }
+    
+    server {
+        listen 80;
+        listen 8080;  # Additional port for API proxy
+        server_name localhost;
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
+        
+        # Custom headers for identification
+        add_header X-Service-Type "Frontend" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Version "v1.0.0" always;
+        
+        # Enable gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+        
+        # Root location - serve static files
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+            
+            # Cache static assets
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
+        
+        # API proxy to backend
+        location /api/ {
+            proxy_pass http://backend_api/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeout settings
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 30s;
+            
+            # Buffer settings
+            proxy_buffering on;
+            proxy_buffer_size 4k;
+            proxy_buffers 8 4k;
+        }
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"frontend","timestamp":"$time_iso8601","hostname":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Readiness check endpoint
+        location /ready {
+            access_log off;
+            # Check if we can reach the backend
+            proxy_pass http://backend_api/api/health;
+            proxy_method GET;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+        }
+        
+        # Nginx status for monitoring (restricted access)
+        location /nginx_status {
+            stub_status on;
+            access_log off;
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 192.168.0.0/16;
+            deny all;
+        }
+        
+        # Application configuration endpoint
+        location /config {
+            access_log off;
+            return 200 '{"environment":"$environment","api_url":"http://backend-api-service:8080","version":"v1.0.0","features":{"shopping_cart":true,"user_reviews":true,"recommendations":true}}';
+            add_header Content-Type application/json;
+        }
+        
+        # Favicon
+        location = /favicon.ico {
+            log_not_found off;
+            access_log off;
+        }
+        
+        # Robots.txt
+        location = /robots.txt {
+            log_not_found off;
+            access_log off;
+        }
+        
+        # Error pages
+        error_page 404 /404.html;
+        error_page 500 502 503 504 /50x.html;
+        
+        location = /50x.html {
+            root /usr/share/nginx/html;
+        }
+    }
+
+---
+# Frontend Static Content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    config-type: content
+  annotations:
+    config.kubernetes.io/description: "Static HTML content for frontend service"
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>E-commerce Platform - Frontend</title>
+        <link rel="stylesheet" href="styles.css">
+        <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    </head>
+    <body>
+        <div id="app">
+            <header class="header">
+                <div class="container">
+                    <h1 class="logo">🛒 E-commerce Platform</h1>
+                    <nav class="navigation">
+                        <a href="#home" class="nav-link active">Home</a>
+                        <a href="#products" class="nav-link">Products</a>
+                        <a href="#users" class="nav-link">Users</a>
+                        <a href="#orders" class="nav-link">Orders</a>
+                        <a href="#admin" class="nav-link">Admin</a>
+                    </nav>
+                </div>
+            </header>
+            
+            <main class="main">
+                <div class="container">
+                    <section id="home" class="section active">
+                        <h2>Welcome to Our E-commerce Platform</h2>
+                        <div class="status-grid">
+                            <div class="status-card">
+                                <h3>🎯 Frontend Status</h3>
+                                <div id="frontend-status" class="status-indicator">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </div>
+                            </div>
+                            <div class="status-card">
+                                <h3>🔧 Backend API</h3>
+                                <div id="backend-status" class="status-indicator">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </div>
+                            </div>
+                            <div class="status-card">
+                                <h3>🗄️ Database</h3>
+                                <div id="database-status" class="status-indicator">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    
+                    <section id="products" class="section">
+                        <h2>Products</h2>
+                        <div id="products-list" class="data-grid">
+                            <div class="loading">Loading products...</div>
+                        </div>
+                    </section>
+                    
+                    <section id="users" class="section">
+                        <h2>Users</h2>
+                        <div id="users-list" class="data-grid">
+                            <div class="loading">Loading users...</div>
+                        </div>
+                    </section>
+                    
+                    <section id="orders" class="section">
+                        <h2>Orders</h2>
+                        <div id="orders-list" class="data-grid">
+                            <div class="loading">Loading orders...</div>
+                        </div>
+                    </section>
+                    
+                    <section id="admin" class="section">
+                        <h2>System Administration</h2>
+                        <div class="admin-panel">
+                            <div class="admin-card">
+                                <h3>System Health</h3>
+                                <button onclick="checkSystemHealth()">Check All Services</button>
+                                <div id="health-results"></div>
+                            </div>
+                            <div class="admin-card">
+                                <h3>Configuration</h3>
+                                <button onclick="loadConfiguration()">Load Config</button>
+                                <div id="config-results"></div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+            
+            <footer class="footer">
+                <div class="container">
+                    <p>&copy; 2024 E-commerce Platform. Built with Kubernetes.</p>
+                    <p>Pod: <span id="pod-name">Loading...</span> | Version: <span id="app-version">v1.0.0</span></p>
+                </div>
+            </footer>
+        </div>
+        
+        <script src="app.js"></script>
+    </body>
+    </html>
+  
+  styles.css: |
+    /* E-commerce Platform Styles */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+    
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+    }
+    
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 20px;
+    }
+    
+    .header {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        padding: 1rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .header .container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .logo {
+        color: white;
+        font-size: 1.8rem;
+        font-weight: bold;
+    }
+    
+    .navigation {
+        display: flex;
+        gap: 2rem;
+    }
+    
+    .nav-link {
+        color: white;
+        text-decoration: none;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        transition: background-color 0.3s ease;
+    }
+    
+    .nav-link:hover,
+    .nav-link.active {
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .main {
+        flex: 1;
+        padding: 2rem 0;
+    }
+    
+    .section {
+        display: none;
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 15px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    }
+    
+    .section.active {
+        display: block;
+    }
+    
+    .section h2 {
+        color: #333;
+        margin-bottom: 1.5rem;
+        font-size: 2rem;
+    }
+    
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin: 2rem 0;
+    }
+    
+    .status-card {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 4px solid #007bff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    .status-card h3 {
+        margin-bottom: 1rem;
+        color: #333;
+    }
+    
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #ffc107;
+        animation: pulse 2s infinite;
+    }
+    
+    .status-dot.healthy {
+        background-color: #28a745;
+        animation: none;
+    }
+    
+    .status-dot.error {
+        background-color: #dc3545;
+        animation: none;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    
+    .data-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+    }
+    
+    .data-card {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+    }
+    
+    .loading {
+        text-align: center;
+        padding: 2rem;
+        color: #666;
+        font-style: italic;
+    }
+    
+    .admin-panel {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2rem;
+    }
+    
+    .admin-card {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #dee2e6;
+    }
+    
+    .admin-card h3 {
+        margin-bottom: 1rem;
+        color: #333;
+    }
+    
+    button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 1rem;
+        transition: background-color 0.3s ease;
+    }
+    
+    button:hover {
+        background: #0056b3;
+    }
+    
+    .footer {
+        background: rgba(0, 0, 0, 0.1);
+        color: white;
+        padding: 1rem 0;
+        text-align: center;
+        margin-top: auto;
+    }
+    
+    #health-results,
+    #config-results {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: white;
+        border-radius: 5px;
+        font-family: monospace;
+        font-size: 0.9rem;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+  
+  app.js: |
+    // E-commerce Platform Frontend JavaScript
+    class EcommercePlatform {
+        constructor() {
+            this.baseURL = window.location.origin;
+            this.init();
+        }
+        
+        async init() {
+            this.setupNavigation();
+            await this.loadPodInfo();
+            await this.checkSystemStatus();
+            this.startStatusMonitoring();
+        }
+        
+        setupNavigation() {
+            const navLinks = document.querySelectorAll('.nav-link');
+            const sections = document.querySelectorAll('.section');
+            
+            navLinks.forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const targetId = link.getAttribute('href').substring(1);
+                    
+                    // Update active nav
+                    navLinks.forEach(l => l.classList.remove('active'));
+                    link.classList.add('active');
+                    
+                    // Update active section
+                    sections.forEach(s => s.classList.remove('active'));
+                    document.getElementById(targetId).classList.add('active');
+                    
+                    // Load section data
+                    this.loadSectionData(targetId);
+                });
+            });
+        }
+        
+        async loadPodInfo() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                document.getElementById('pod-name').textContent = data.hostname || 'Unknown';
+            } catch (error) {
+                console.error('Failed to load pod info:', error);
+            }
+        }
+        
+        async checkSystemStatus() {
+            // Frontend status
+            this.updateStatus('frontend-status', 'healthy', 'Frontend Running');
+            
+            // Backend API status
+            try {
+                const response = await fetch('/api/health');
+                if (response.ok) {
+                    this.updateStatus('backend-status', 'healthy', 'API Connected');
+                } else {
+                    this.updateStatus('backend-status', 'error', 'API Error');
+                }
+            } catch (error) {
+                this.updateStatus('backend-status', 'error', 'API Unreachable');
+            }
+            
+            // Database status (simulated through backend)
+            try {
+                const response = await fetch('/api/database/health');
+                if (response.ok) {
+                    this.updateStatus('database-status', 'healthy', 'Database Connected');
+                } else {
+                    this.updateStatus('database-status', 'error', 'Database Error');
+                }
+            } catch (error) {
+                this.updateStatus('database-status', 'error', 'Database Unreachable');
+            }
+        }
+        
+        updateStatus(elementId, status, text) {
+            const element = document.getElementById(elementId);
+            const dot = element.querySelector('.status-dot');
+            const textElement = element.querySelector('.status-text');
+            
+            dot.className = `status-dot ${status}`;
+            textElement.textContent = text;
+        }
+        
+        async loadSectionData(sectionId) {
+            switch (sectionId) {
+                case 'products':
+                    await this.loadProducts();
+                    break;
+                case 'users':
+                    await this.loadUsers();
+                    break;
+                case 'orders':
+                    await this.loadOrders();
+                    break;
+            }
+        }
+        
+        async loadProducts() {
+            const container = document.getElementById('products-list');
+            try {
+                const response = await fetch('/api/products');
+                const products = await response.json();
+                
+                container.innerHTML = products.map(product => `
+                    <div class="data-card">
+                        <h4>${product.name}</h4>
+                        <p>Price: $${product.price}</p>
+                        <p>Category: ${product.category}</p>
+                        <p>Stock: ${product.stock}</p>
+                    </div>
+                `).join('');
+            } catch (error) {
+                container.innerHTML = '<div class="loading">Failed to load products</div>';
+            }
+        }
+        
+        async loadUsers() {
+            const container = document.getElementById('users-list');
+            try {
+                const response = await fetch('/api/users');
+                const users = await response.json();
+                
+                container.innerHTML = users.map(user => `
+                    <div class="data-card">
+                        <h4>${user.name}</h4>
+                        <p>Email: ${user.email}</p>
+                        <p>Role: ${user.role}</p>
+                        <p>Status: ${user.status}</p>
+                    </div>
+                `).join('');
+            } catch (error) {
+                container.innerHTML = '<div class="loading">Failed to load users</div>';
+            }
+        }
+        
+        async loadOrders() {
+            const container = document.getElementById('orders-list');
+            try {
+                const response = await fetch('/api/orders');
+                const orders = await response.json();
+                
+                container.innerHTML = orders.map(order => `
+                    <div class="data-card">
+                        <h4>Order #${order.id}</h4>
+                        <p>Customer: ${order.customer}</p>
+                        <p>Total: $${order.total}</p>
+                        <p>Status: ${order.status}</p>
+                        <p>Date: ${order.date}</p>
+                    </div>
+                `).join('');
+            } catch (error) {
+                container.innerHTML = '<div class="loading">Failed to load orders</div>';
+            }
+        }
+        
+        startStatusMonitoring() {
+            setInterval(() => {
+                this.checkSystemStatus();
+            }, 30000); // Check every 30 seconds
+        }
+    }
+    
+    // Global functions for admin panel
+    async function checkSystemHealth() {
+        const resultsDiv = document.getElementById('health-results');
+        resultsDiv.innerHTML = 'Checking system health...\n';
+        
+        const endpoints = [
+            { name: 'Frontend Health', url: '/health' },
+            { name: 'Backend Health', url: '/api/health' },
+            { name: 'Database Health', url: '/api/database/health' },
+            { name: 'Backend Ready', url: '/api/ready' }
+        ];
+        
+        for (const endpoint of endpoints) {
+            try {
+                const start = Date.now();
+                const response = await fetch(endpoint.url);
+                const duration = Date.now() - start;
+                const status = response.ok ? 'OK' : 'ERROR';
+                resultsDiv.innerHTML += `${endpoint.name}: ${status} (${duration}ms)\n`;
+            } catch (error) {
+                resultsDiv.innerHTML += `${endpoint.name}: ERROR - ${error.message}\n`;
+            }
+        }
+    }
+    
+    async function loadConfiguration() {
+        const resultsDiv = document.getElementById('config-results');
+        try {
+            const response = await fetch('/config');
+            const config = await response.json();
+            resultsDiv.innerHTML = JSON.stringify(config, null, 2);
+        } catch (error) {
+            resultsDiv.innerHTML = `Error loading configuration: ${error.message}`;
+        }
+    }
+    
+    // Initialize the application
+    document.addEventListener('DOMContentLoaded', () => {
+        new EcommercePlatform();
+    });
+  
+  404.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Page Not Found - E-commerce Platform</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-direction: column;
+            }
+            h1 { font-size: 4rem; margin-bottom: 1rem; }
+            p { font-size: 1.2rem; margin-bottom: 2rem; }
+            a { color: #ffd700; text-decoration: none; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <h1>404</h1>
+        <p>Oops! The page you're looking for doesn't exist.</p>
+        <a href="/">Return to Home</a>
+    </body>
+    </html>
+  
+  favicon.ico: |
+    # Placeholder for favicon - in real deployment, this would be a binary file

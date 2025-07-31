@@ -1,0 +1,1045 @@
+# Multi-Tier Networking Architecture Demo
+# Demonstrates a complete 3-tier application with proper network segmentation
+# Shows frontend, backend, database tiers with security policies and service mesh patterns
+
+---
+# Namespace for multi-tier demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: multi-tier-app
+  labels:
+    purpose: multi-tier-demo
+    architecture: three-tier
+    network-segmentation: enabled
+
+---
+# Network Policies for tier separation
+# Frontend tier policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-network-policy
+  namespace: multi-tier-app
+  labels:
+    tier: frontend
+    policy-type: ingress-egress
+spec:
+  podSelector:
+    matchLabels:
+      tier: frontend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from load balancer
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 80
+  # Allow health checks
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow communication to backend tier only
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Backend tier policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-network-policy
+  namespace: multi-tier-app
+  labels:
+    tier: backend
+    policy-type: ingress-egress
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only allow ingress from frontend tier
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow communication to database tier only
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow external API calls (optional)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Database tier policy (most restrictive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-network-policy
+  namespace: multi-tier-app
+  labels:
+    tier: database
+    policy-type: ingress-egress
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only allow ingress from backend tier
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:
+  # Allow DNS resolution only
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Frontend Tier Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-tier
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: frontend
+    component: web-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: frontend
+        component: web-server
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "80"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  tier: frontend
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx-frontend
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: frontend-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: frontend-content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        env:
+        - name: BACKEND_SERVICE_URL
+          value: "http://backend-service.multi-tier-app.svc.cluster.local:8080"
+        - name: TIER
+          value: "frontend"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 101
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: frontend-config
+        configMap:
+          name: frontend-config
+      - name: frontend-content
+        configMap:
+          name: frontend-content
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: frontend
+  annotations:
+    service.kubernetes.io/description: "Frontend web server service"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "80"
+spec:
+  type: LoadBalancer
+  selector:
+    app: multi-tier-app
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  sessionAffinity: None
+
+---
+# Backend Tier Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-tier
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: backend
+    component: api-server
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: backend
+        component: api-server
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  tier: backend
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: api-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+          name: http-api
+        volumeMounts:
+        - name: backend-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://database-service.multi-tier-app.svc.cluster.local:5432/appdb"
+        - name: TIER
+          value: "backend"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 101
+          capabilities:
+            drop:
+            - ALL
+      # Circuit breaker sidecar
+      - name: circuit-breaker
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          echo "Circuit breaker sidecar starting..."
+          while true; do
+            echo "Circuit breaker monitoring - $(date)"
+            echo "Database connections: healthy, API rate: normal"
+            sleep 30
+          done
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "25m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: backend-config
+        configMap:
+          name: backend-config
+
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: backend
+  annotations:
+    service.kubernetes.io/description: "Backend API service"
+spec:
+  type: ClusterIP
+  selector:
+    app: multi-tier-app
+    tier: backend
+  ports:
+  - name: http-api
+    port: 8080
+    targetPort: 8080
+  sessionAffinity: None
+
+---
+# Database Tier StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-tier
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: database
+    component: postgres
+spec:
+  serviceName: database-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-tier-app
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: multi-tier-app
+        tier: database
+        component: postgres
+        version: v1.0.0
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "appdb"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: database-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"
+          initialDelaySeconds: 20
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop:
+            - ALL
+      # Database backup sidecar
+      - name: backup-agent
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Database backup agent starting..."
+          while true; do
+            echo "Creating backup - $(date)"
+            sleep 3600  # Backup every hour
+          done
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: username
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: database-config
+        configMap:
+          name: database-config
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Database Service (Headless for StatefulSet)
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: database
+  annotations:
+    service.kubernetes.io/description: "Database service for backend tier access"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: multi-tier-app
+    tier: database
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+
+---
+# Database Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-secret
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: database
+type: Opaque
+data:
+  username: YXBwdXNlcg==  # appuser
+  password: c2VjdXJlcGFzc3dvcmQ=  # securepassword
+
+---
+# ConfigMaps for each tier
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: multi-tier-app
+  labels:
+    tier: frontend
+data:
+  default.conf: |
+    upstream backend {
+        server backend-service.multi-tier-app.svc.cluster.local:8080;
+        keepalive 32;
+    }
+    
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Tier "frontend" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Service-Mesh "enabled" always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","tier":"frontend","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Proxy API calls to backend
+        location /api/ {
+            proxy_pass http://backend/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Tier "frontend";
+            
+            # Circuit breaker simulation
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 10s;
+            proxy_read_timeout 10s;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: multi-tier-app
+  labels:
+    tier: backend
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        
+        add_header X-Tier "backend" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Database-Connection "pool-enabled" always;
+        
+        location /api/health {
+            access_log off;
+            return 200 '{"status":"healthy","tier":"backend","database":"connected","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/users {
+            return 200 '{"users":[{"id":1,"name":"John Doe","tier":"backend"},{"id":2,"name":"Jane Smith","tier":"backend"}],"database":"connected","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/products {
+            return 200 '{"products":[{"id":1,"name":"Laptop","price":999.99},{"id":2,"name":"Phone","price":599.99}],"database":"connected","tier":"backend","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/orders {
+            return 200 '{"orders":[{"id":1,"total":999.99,"status":"completed","tier":"backend"}],"database":"connected","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/stats {
+            return 200 '{"tier":"backend","database_connections":5,"cache_hit_rate":"95%","response_time":"50ms","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: multi-tier-app
+  labels:
+    tier: database
+data:
+  postgresql.conf: |
+    # Multi-tier application database configuration
+    
+    # Connection settings
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 50
+    
+    # Memory settings
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    work_mem = 4MB
+    
+    # Logging settings
+    log_statement = 'mod'
+    log_min_duration_statement = 1000
+    log_connections = on
+    log_disconnections = on
+    
+    # Performance settings
+    checkpoint_timeout = 15min
+    wal_buffers = 16MB
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: multi-tier-app
+  labels:
+    tier: frontend
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Multi-Tier Architecture Demo</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .tier-badge {
+                background: #3b82f6;
+                padding: 10px 20px;
+                border-radius: 25px;
+                display: inline-block;
+                margin-bottom: 20px;
+                font-weight: bold;
+            }
+            .tier-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .tier-card {
+                background: rgba(255, 255, 255, 0.15);
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 4px solid #3b82f6;
+            }
+            .tier-name {
+                color: #60a5fa;
+                font-size: 14px;
+                font-weight: bold;
+                margin-bottom: 5px;
+            }
+            .test-button {
+                background: #3b82f6;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin: 5px;
+                font-size: 12px;
+            }
+            .test-button:hover {
+                background: #2563eb;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 15px;
+                border-radius: 8px;
+                margin: 10px 0;
+                font-family: monospace;
+                font-size: 12px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .architecture-diagram {
+                background: rgba(255, 255, 255, 0.9);
+                color: #333;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                text-align: center;
+            }
+            .flow-diagram {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin: 20px 0;
+            }
+            .flow-box {
+                background: #3b82f6;
+                color: white;
+                padding: 15px;
+                border-radius: 8px;
+                flex: 1;
+                margin: 0 10px;
+                text-align: center;
+            }
+            .arrow {
+                font-size: 24px;
+                color: #3b82f6;
+            }
+            .command {
+                background: #1f2937;
+                color: #e5e7eb;
+                padding: 15px;
+                border-radius: 8px;
+                font-family: 'Courier New', monospace;
+                margin: 10px 0;
+                overflow-x: auto;
+            }
+        </style>
+        <script>
+            function testTier(endpoint, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(endpoint)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="tier-badge">🏗️ Multi-Tier Architecture</div>
+            <h1>3-Tier Application with Network Segmentation</h1>
+            <p>This demo showcases a production-ready 3-tier architecture with proper network policies, service mesh patterns, and security controls.</p>
+            
+            <div class="architecture-diagram">
+                <h2>Architecture Overview</h2>
+                <div class="flow-diagram">
+                    <div class="flow-box">
+                        <strong>Frontend Tier</strong><br>
+                        Web Server (Nginx)<br>
+                        Port: 80<br>
+                        Replicas: 3
+                    </div>
+                    <div class="arrow">→</div>
+                    <div class="flow-box">
+                        <strong>Backend Tier</strong><br>
+                        API Server<br>
+                        Port: 8080<br>
+                        Replicas: 4
+                    </div>
+                    <div class="arrow">→</div>
+                    <div class="flow-box">
+                        <strong>Database Tier</strong><br>
+                        PostgreSQL<br>
+                        Port: 5432<br>
+                        Replicas: 1
+                    </div>
+                </div>
+            </div>
+            
+            <h2>🔬 Test Each Tier</h2>
+            <div class="tier-grid">
+                <div class="tier-card">
+                    <div class="tier-name">FRONTEND TIER</div>
+                    <h3>Web Server Layer</h3>
+                    <p>Handles user requests, serves static content, proxies API calls</p>
+                    <button class="test-button" onclick="testTier('/health', 'frontend-result')">Health Check</button>
+                    <div id="frontend-result" class="test-result" style="display: none;"></div>
+                </div>
+                
+                <div class="tier-card">
+                    <div class="tier-name">BACKEND TIER</div>
+                    <h3>API Server Layer</h3>
+                    <p>Business logic, API endpoints, database connections</p>
+                    <button class="test-button" onclick="testTier('/api/health', 'backend-result')">Health Check</button>
+                    <button class="test-button" onclick="testTier('/api/users', 'users-result')">Users API</button>
+                    <button class="test-button" onclick="testTier('/api/stats', 'stats-result')">Stats API</button>
+                    <div id="backend-result" class="test-result" style="display: none;"></div>
+                    <div id="users-result" class="test-result" style="display: none;"></div>
+                    <div id="stats-result" class="test-result" style="display: none;"></div>
+                </div>
+                
+                <div class="tier-card">
+                    <div class="tier-name">DATABASE TIER</div>
+                    <h3>Data Storage Layer</h3>
+                    <p>PostgreSQL database with persistent storage and backups</p>
+                    <p><strong>Network:</strong> Backend-only access</p>
+                    <p><strong>Security:</strong> Isolated with strict policies</p>
+                </div>
+            </div>
+            
+            <h2>🛡️ Network Security</h2>
+            <div class="tier-grid">
+                <div class="tier-card">
+                    <h3>Network Policies</h3>
+                    <ul>
+                        <li>Frontend: Accepts external traffic, talks to backend only</li>
+                        <li>Backend: Accepts frontend traffic, talks to database only</li>
+                        <li>Database: Accepts backend traffic only</li>
+                    </ul>
+                </div>
+                
+                <div class="tier-card">
+                    <h3>Service Mesh Features</h3>
+                    <ul>
+                        <li>Load balancing across tier replicas</li>
+                        <li>Circuit breaker patterns</li>
+                        <li>Health checks and monitoring</li>
+                        <li>Automatic service discovery</li>
+                    </ul>
+                </div>
+                
+                <div class="tier-card">
+                    <h3>Security Controls</h3>
+                    <ul>
+                        <li>Pod security contexts</li>
+                        <li>Resource limits and requests</li>
+                        <li>Secret management</li>
+                        <li>Read-only root filesystems</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <h2>📊 Monitoring & Observability</h2>
+            <div class="command"># Check tier health and connectivity
+kubectl get pods -n multi-tier-app -l tier=frontend
+kubectl get pods -n multi-tier-app -l tier=backend
+kubectl get pods -n multi-tier-app -l tier=database
+
+# Test network policies
+kubectl exec -it &lt;frontend-pod&gt; -n multi-tier-app -- curl backend-service:8080/api/health
+kubectl exec -it &lt;backend-pod&gt; -n multi-tier-app -- pg_isready -h database-service -p 5432
+
+# Monitor resource usage
+kubectl top pods -n multi-tier-app</div>
+            
+            <h2>🚀 Scaling & High Availability</h2>
+            <div class="command"># Scale tiers independently
+kubectl scale deployment frontend-tier --replicas=5 -n multi-tier-app
+kubectl scale deployment backend-tier --replicas=6 -n multi-tier-app
+
+# Check load distribution
+kubectl get endpoints -n multi-tier-app
+
+# Monitor pod distribution across nodes
+kubectl get pods -n multi-tier-app -o wide</div>
+            
+            <h2>💡 Architecture Benefits</h2>
+            <div class="tier-grid">
+                <div class="tier-card">
+                    <h3>Scalability</h3>
+                    <p>Each tier can be scaled independently based on load and resource requirements</p>
+                </div>
+                
+                <div class="tier-card">
+                    <h3>Security</h3>
+                    <p>Network segmentation prevents unauthorized access between tiers</p>
+                </div>
+                
+                <div class="tier-card">
+                    <h3>Maintainability</h3>
+                    <p>Clear separation of concerns makes updates and debugging easier</p>
+                </div>
+                
+                <div class="tier-card">
+                    <h3>Resilience</h3>
+                    <p>Failure in one tier doesn't necessarily affect others</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-tier-ingress
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Architecture "multi-tier" always;
+      add_header X-Ingress-Tier "frontend" always;
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: multi-tier.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+
+---
+# HorizontalPodAutoscaler for backend tier
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: multi-tier-app
+  labels:
+    app: multi-tier-app
+    tier: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend-tier
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

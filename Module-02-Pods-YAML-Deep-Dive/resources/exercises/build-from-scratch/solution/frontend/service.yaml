@@ -1,0 +1,136 @@
+# Frontend Service - E-commerce Platform
+# ClusterIP service for internal communication and LoadBalancer for external access
+
+---
+# Internal ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+  annotations:
+    service.kubernetes.io/description: "Internal service for frontend application"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9113"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: api-proxy
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9113
+    targetPort: 9113
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# External LoadBalancer Service (for production access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-loadbalancer
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    exposure: external
+  annotations:
+    service.kubernetes.io/description: "External LoadBalancer service for frontend"
+    # AWS Load Balancer annotations (uncomment if using AWS)
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    # service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/cert-id"
+    # service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+spec:
+  type: LoadBalancer
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 80
+    protocol: TCP
+  sessionAffinity: None
+  # External traffic policy to preserve source IP
+  externalTrafficPolicy: Local
+
+---
+# NodePort Service (for development/testing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-nodeport
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    exposure: nodeport
+  annotations:
+    service.kubernetes.io/description: "NodePort service for development access"
+spec:
+  type: NodePort
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30080
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Headless Service for direct pod access (useful for debugging)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-headless
+  namespace: ecommerce-platform
+  labels:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+    service-type: headless
+  annotations:
+    service.kubernetes.io/description: "Headless service for direct pod access"
+spec:
+  type: ClusterIP
+  clusterIP: None  # This makes it headless
+  selector:
+    app: ecommerce-platform
+    component: frontend
+    tier: presentation
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: metrics
+    port: 9113
+    targetPort: 9113
+    protocol: TCP

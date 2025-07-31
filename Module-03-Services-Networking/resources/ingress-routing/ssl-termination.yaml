@@ -1,0 +1,664 @@
+# SSL Termination Ingress Example
+# Demonstrates TLS/SSL termination at the ingress controller level
+# Shows certificate management, HTTPS redirect, and security configurations
+
+---
+# Namespace for SSL termination demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ssl-termination-demo
+  labels:
+    purpose: ssl-termination
+    security-level: high
+
+---
+# Certificate Secret (In production, use cert-manager or external certificate)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: example-tls-cert
+  namespace: ssl-termination-demo
+  labels:
+    app: ssl-demo
+    type: tls-certificate
+type: kubernetes.io/tls
+data:
+  # Self-signed certificate for demo purposes
+  # In production, use proper CA-signed certificates
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURBekNDQWV1Z0F3SUJBZ0lKQUxuUzVVd1pxMlRxTUEwR0NTcUdTSWIzRFFFQkN3VUFNQkV4RHpBTkJnTlYKQkFNTUJtVjRZVzF3YkdVd0hoY05NalF3TVRFMU1EZ3dNREF3V2hjTk1qVXdNVEUxTURnd01EQXdXakFSTVE4dwpEUVlEVlFRRERBWmxlR0Z0Y0d4bE1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBCm5HYnprZXh5TFZRN0pqRGZqQWc5MXFzRUZxVU03ZDJCQUE3S2N4QlRuZ3hCYldVaEVFWjU3VUpBa0NCZDczZ2cKNTh5U09mY0JNYm9qTnh6MTVCNkFUdkZNbVJjWDF4Y0hKeXNLcVpRMGVGU3h6aXJRdUFxSWI5Zm51VGFRVjYrQgpuRlYwNXFZRGVUOXFkM3ExYUZ2WXkxdUdxaWxKUGFFcmJNYURIR08xaFNic1JSRGU4UjdSUGZmSGc4VXRCMkZOCmJpWm9xWnk4V1U1cDRXQ0trUVMxY3hlc3dPSE8yWDJzaXEybE5FSFFIR3pOTnU4VUk4MFg0aVNJN1ZuQzZIbWcKOWNkeTJHOFJKcTc5dW5FZFV3SjhCb3JkNVJKSGI5dStRN1o3OWJ3TFRvV3IySVV3cGl5V1JGWTNaT1JPcnE4MQpNaXVncE1kOU9ZaGMrdjB5b3dJREFRQUJvMU13VVRBZEJnTlZIUTRFRmdRVWhjRHJhNHJJdTFrSU9yUktEUlZaCms0MnFMSTR3SHdZRFZSMGpCQmd3Rm9BVWhjRHJhNHJJdTFrSU9yUktEUlZaazQycUxJNHdEd1lEVlIwVEFRSC8KQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBY0ptV0haTEtFOUZFVFFOYm1NM3ZEMWJOdmdQQwpVSUtwSDJOQmtFY2ZvTEJCOXNIV3dPdjRpUVIzVU5GZzNSZzFPL2hvWFFGY3BRUm5VUXhDM0NwVEJPSkJkWHVECmpuN3FSV3NkUGNqd1R2WUNaWDNHc1RzcHlqNGJ5KzZmQVJmbGl0cGJtRkNDdGhhTW9Tb0NNZWlNZE15SVJCcUIKTkc3bWlIYXRNRjYwdmk2eG5uMEhKYURGbUVlOTdTaHQ5RzV6cis0cUFRZm9xaTl4THQ1L3FReDNXSGFGV2NaSQozaUNyWG9Hc1Jlc0NLVjhmQU5PQTU0MG5YSXdtQW9oWVZHSEJsU2hBZkRnQ0w1R1JjSXFKU25CbHBHOXlMNEJhCitBQk9sSEJjYms3Zk5YSW4vZ2VHM1MxQVpyWDloSEd0SlROS0FGMmlhS3dLSmhJb3hLQUhQdz09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQ2Nadk9SN0hJdFZEc20KTU4rTUNEM1dxd1FXcFEwdDNZSDBEc3B6RUZPZERFR3RaU0VRUm5udFVrQ1FJRjN2ZUNEbnpKSTU5d0V4dWlNMwpIUFhrSG9CTzhVeVpGeGZYRndjbkt3cXBsRFI0VkxIT0t0QzRDb2h2MSttNU5wQlhyNEdjVlhUbXBnTjVQMnAzCmVyVm9XOWpMVzRhcUtVazlvU3RzeG9NY1k3V0ZKdXhGRU43eEh0RTk5OGVEeFMwSFlVMXVKbWlwbkx4WlRtbmgKWUlxUkJMVnpGNnpBNGM3WmZheUtyYVUwUWRBY2JNMDI3eFNqelJmaUpJanRXY0xvZWFEMXgzTFlieEVtcnYyNgpjUjFUQW53R2l0M2xFa2R2Mjc1RHRudjF2QXRPaGF2WWhUQ21MSllFVmpkazVFNnVyell5SzZDa3gzMDVpRno2Ci9US2pBZ01CQUFFQ2dnRUFXcXlxWjM5OFNBdFVsd01UM29YZ21xcEF0b2NKUEVEQStBRDBaYlpkbnhDRzNQUGsKcUhBRDBmQUc4UEQvLy9FWTRUU1BtLzNhY1dKblVLYWg0Q1JmbkVTL3k3cDN5SVZMVTU1S2xrczVFOVMwclh2QwpTUVc3cEhqZ2xZV0tObXNOcTJaWHdTRWh6T2k1cEJYU09KeDliZkJqbFBIaVVJTFFDdjJJeGJaR1lBYXQyaVpiCnVvR1QybHBiRVhRRzhSaEtWaDJYb0NyQUhNK0V6M2pnaFJwdjg4MGlHSE1JRUhOdjNNRnZJZWJKT3Y3REVqWk4KQUtFc3pETC90Q3YzMGEzQkRxd01QeTdLOWhySjJsZ2oyVHVENit3Z1NQeTN1QVlYaU5CRkVOUkFvMFVpM1k4ZAp1UTFLRDJTa0pGRHk1dVZxbHRYTzBhNHJxeDc0bGVjNWZRUUt2UUtCZ1FESnFScjE5WlF2UE9lTXNqN3R4S0hJCkdoSHh2VFhEZWNsWU1JcVl2eUxqUk50TkNzUllxUzRvMDE2NGlrWXVrZ1M4Q1BtUnl2WnUveDVxR2M0R0QwWlEKQnMzN3NqSlBMSm1obVBZTCtGYTlGQkVWY25JODByNDd1ajVxb0hKMnJ2aGJRcWJXdk8weFMzSjc1ZUFVR3p0YQp6TnorZUtRbXg5bzZHUnNHajZJL1V3S0JnUURHN0ZUcFZKWkxGUDY4ckxlSDFva1ZleTB5STB6QkhwQklRdzA0CnFhb29rUnU5eUhWMVNHa1UwWnBldUJZUzdET2tvSGdGYVptLzVKQ2JFRFN2djg0ZElHcGVxR2JQVkNqRkwxeWYKL29TZkMzUmN2K3JCZFJZL3JxT1FnNXMzOGFHZGxHOTdPTkx4bUhqSnE3T1VyYVZXT1pDSDNTbSt1WGhsSGdWZAoyNDczRlFLQmdDNXFUaDI5L0lxVXVtekNJcVNSMVAvUGFyRGNLd2YyQ3hRZlgzNjJzTGxXamJvNFR5MHJ0clQ5CjdEYTVwTEtGS2JOZXNIODNzVks3L3U5cW03UnFpMVhOL1EzOTFKTjB2dERnWWtPZ3BYZVNBRjh5QmlXbS9hV3MKS09ZbkRIVUlyNFZIdnFwRElYMEpoVnZBZWZQVThXTU0ybExObWREcWh2c2xnRE9EdmRqRkFvR0FJQWV0OUt2UwphYTNhSTJmY0NyZTZFQkhsRWRLdXhrMEZIak96OWdKZk5McGFJS25vZVVWRHlwUjcyWlJLaE9NL3hGRkwwN0ZxCmk5bEl3V1Z4Zk1UU21FU1A2Wm01dVVTRUQwb2VTdWd6NHFWWHZkNWRGR3NhWGVPMzQvUGF3RHJHWkhhNDZHZDgKY29GUE13K2dKU3BsYkJBTkFHRTNjWURCZ3VBZzBBaHVhdlVDZ1lFQXF1TG1kMzVZUmwrM2pEcnlNWjREMXRkQwprZmFHYUJ2K0FaNkVKS09VQzBISmNaN2MrMDgxeGhXMTZzTHVRYlZqZXlGMEwxYTlkcTNzSkVrRkZHWklxNGpZCmVrNHI0M0VocWxWQU5FMG9abjVHUk01TVNjUzZGdXQ0WlVpSE9KZVNhZ0VhQUR0ZmNCRXBwbmRqYVFDQW83NmkKVWZ6ZlgyVjJ1dDJ2S3pFPQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
+
+---
+# Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-app
+  namespace: ssl-termination-demo
+  labels:
+    app: secure-app
+    security: https
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secure-app
+  template:
+    metadata:
+      labels:
+        app: secure-app
+        security: https
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: app-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: app-content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: app-config
+        configMap:
+          name: secure-app-config
+      - name: app-content
+        configMap:
+          name: secure-app-content
+
+---
+# Service for the application
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-app-service
+  namespace: ssl-termination-demo
+  labels:
+    app: secure-app
+spec:
+  type: ClusterIP
+  selector:
+    app: secure-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# SSL Termination Ingress with HTTPS redirect
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssl-termination-ingress
+  namespace: ssl-termination-demo
+  labels:
+    app: secure-app
+    security: ssl-termination
+  annotations:
+    # SSL and HTTPS configurations
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-RSA-AES128-SHA256,ECDHE-RSA-AES256-SHA384"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-SSL-Termination "true" always;
+      add_header X-Forwarded-Proto "https" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-Frame-Options "DENY" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self';" always;
+    
+    # Performance optimizations
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      # SSL session cache
+      ssl_session_cache shared:SSL:10m;
+      ssl_session_timeout 10m;
+      
+      # OCSP stapling
+      ssl_stapling on;
+      ssl_stapling_verify on;
+      
+      # Perfect Forward Secrecy
+      ssl_prefer_server_ciphers on;
+      ssl_ecdh_curve secp384r1;
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - example.com
+    - www.example.com
+    - secure.example.com
+    secretName: example-tls-cert
+  rules:
+  # Main domain with SSL
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+  
+  # www subdomain with SSL
+  - host: www.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+  
+  # Secure subdomain with SSL
+  - host: secure.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+
+---
+# Mixed SSL/Non-SSL Ingress (demonstrates different security levels)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mixed-security-ingress
+  namespace: ssl-termination-demo
+  labels:
+    app: secure-app
+    security: mixed
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Conditional HTTPS redirect based on host
+      set $redirect_to_https 0;
+      if ($host = "secure.example.com") {
+        set $redirect_to_https 1;
+      }
+      if ($scheme = "http") {
+        set $redirect_to_https "${redirect_to_https}1";
+      }
+      if ($redirect_to_https = "11") {
+        return 301 https://$host$request_uri;
+      }
+      
+      add_header X-Security-Level "mixed" always;
+      add_header X-Protocol-Used "$scheme" always;
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - secure.example.com
+    secretName: example-tls-cert
+  rules:
+  # Non-SSL endpoint
+  - host: insecure.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+  
+  # SSL-required endpoint
+  - host: secure.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+
+---
+# Certificate management demo (using cert-manager annotations)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auto-cert-ingress
+  namespace: ssl-termination-demo
+  labels:
+    app: secure-app
+    security: auto-cert
+  annotations:
+    # Cert-manager annotations (requires cert-manager to be installed)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: http01
+    
+    # SSL configurations
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Certificate-Source "cert-manager" always;
+      add_header X-Auto-Cert "enabled" always;
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - auto-cert.example.com
+    secretName: auto-cert-tls  # Will be created by cert-manager
+  rules:
+  - host: auto-cert.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-app-service
+            port:
+              number: 80
+
+---
+# Application Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-app-config
+  namespace: ssl-termination-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Backend-Server $hostname always;
+        add_header X-Request-Protocol $scheme always;
+        add_header X-Forwarded-For $proxy_add_x_forwarded_for always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","ssl_termination":"ingress","server":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /security-info {
+            access_log off;
+            return 200 '{"ssl_termination":"ingress","backend_protocol":"http","security_headers":"enabled","server":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# Application Content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-app-content
+  namespace: ssl-termination-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SSL Termination Demo</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1000px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .ssl-badge {
+                background: #48bb78;
+                padding: 10px 20px;
+                border-radius: 25px;
+                display: inline-block;
+                margin-bottom: 20px;
+                font-weight: bold;
+            }
+            .protocol-info {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            .test-button {
+                background: #48bb78;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                cursor: pointer;
+                margin: 10px;
+                font-size: 16px;
+            }
+            .test-button:hover {
+                background: #38a169;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-family: monospace;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            .security-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                background: rgba(255, 255, 255, 0.9);
+                color: #333;
+                border-radius: 10px;
+                overflow: hidden;
+            }
+            .security-table th, .security-table td {
+                padding: 12px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+            .security-table th {
+                background: #48bb78;
+                color: white;
+                font-weight: bold;
+            }
+            .command {
+                background: #2d3748;
+                color: #e2e8f0;
+                padding: 15px;
+                border-radius: 8px;
+                font-family: 'Courier New', monospace;
+                margin: 10px 0;
+                overflow-x: auto;
+            }
+            .warning {
+                background: rgba(245, 101, 101, 0.2);
+                border-left: 4px solid #f56565;
+                padding: 15px;
+                margin: 20px 0;
+                border-radius: 5px;
+            }
+            .info {
+                background: rgba(66, 153, 225, 0.2);
+                border-left: 4px solid #4299e1;
+                padding: 15px;
+                margin: 20px 0;
+                border-radius: 5px;
+            }
+        </style>
+        <script>
+            function updateProtocolInfo() {
+                const protocol = window.location.protocol;
+                const host = window.location.host;
+                const isSecure = protocol === 'https:';
+                
+                document.getElementById('current-protocol').innerHTML = protocol;
+                document.getElementById('current-host').innerHTML = host;
+                document.getElementById('ssl-status').innerHTML = isSecure ? '✅ Secured with SSL/TLS' : '⚠️ Not secured (HTTP)';
+                document.getElementById('ssl-status').style.color = isSecure ? '#48bb78' : '#f56565';
+            }
+            
+            function testEndpoint(url, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+            
+            function checkSSLHeaders() {
+                const resultDiv = document.getElementById('ssl-headers-result');
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Checking SSL headers...';
+                
+                fetch('/security-info')
+                    .then(response => {
+                        const headers = {};
+                        for (let [key, value] of response.headers.entries()) {
+                            headers[key] = value;
+                        }
+                        return response.json().then(data => ({data, headers}));
+                    })
+                    .then(({data, headers}) => {
+                        const result = {
+                            security_info: data,
+                            response_headers: headers,
+                            ssl_indicators: {
+                                protocol: window.location.protocol,
+                                secure_context: window.isSecureContext,
+                                has_hsts: headers['strict-transport-security'] ? 'Yes' : 'No',
+                                has_csp: headers['content-security-policy'] ? 'Yes' : 'No'
+                            }
+                        };
+                        resultDiv.innerHTML = JSON.stringify(result, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+            
+            window.onload = updateProtocolInfo;
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="ssl-badge">🔒 SSL Termination Demo</div>
+            <h1>SSL/TLS Termination with Kubernetes Ingress</h1>
+            
+            <div class="protocol-info">
+                <h3>Current Connection Information</h3>
+                <p><strong>Protocol:</strong> <span id="current-protocol"></span></p>
+                <p><strong>Host:</strong> <span id="current-host"></span></p>
+                <p><strong>SSL Status:</strong> <span id="ssl-status"></span></p>
+            </div>
+            
+            <h2>🔐 SSL Termination Features</h2>
+            <table class="security-table">
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>TLS 1.2/1.3</td>
+                        <td>Modern TLS protocols</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                    <tr>
+                        <td>HTTPS Redirect</td>
+                        <td>Automatic HTTP to HTTPS redirect</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                    <tr>
+                        <td>HSTS Headers</td>
+                        <td>HTTP Strict Transport Security</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                    <tr>
+                        <td>Security Headers</td>
+                        <td>X-Frame-Options, CSP, etc.</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                    <tr>
+                        <td>SSL Session Cache</td>
+                        <td>SSL session reuse optimization</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                    <tr>
+                        <td>Perfect Forward Secrecy</td>
+                        <td>ECDHE key exchange</td>
+                        <td>✅ Enabled</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h2>🧪 Testing SSL Termination</h2>
+            <button class="test-button" onclick="testEndpoint('/health', 'health-result')">Health Check</button>
+            <button class="test-button" onclick="testEndpoint('/security-info', 'security-result')">Security Info</button>
+            <button class="test-button" onclick="checkSSLHeaders()">Check SSL Headers</button>
+            
+            <div id="health-result" class="test-result" style="display: none;"></div>
+            <div id="security-result" class="test-result" style="display: none;"></div>
+            <div id="ssl-headers-result" class="test-result" style="display: none;"></div>
+            
+            <h2>📋 Testing Commands</h2>
+            
+            <h3>Test HTTPS Endpoints</h3>
+            <div class="command"># Test secure endpoints
+curl -k https://example.com/health
+curl -k https://www.example.com/security-info
+curl -k https://secure.example.com/
+
+# Test with certificate verification
+curl --cacert ca.crt https://example.com/health
+
+# Test SSL connection details
+openssl s_client -connect example.com:443 -servername example.com</div>
+            
+            <h3>Test HTTP to HTTPS Redirect</h3>
+            <div class="command"># These should redirect to HTTPS
+curl -I http://example.com/
+curl -I http://www.example.com/
+
+# Test redirect with curl following redirects
+curl -L http://example.com/ | head -20</div>
+            
+            <h3>Certificate Information</h3>
+            <div class="command"># Check certificate details
+openssl s_client -connect example.com:443 -servername example.com < /dev/null 2>/dev/null | openssl x509 -text -noout
+
+# Check certificate expiration
+openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates</div>
+            
+            <div class="info">
+                <h4>💡 SSL Termination Benefits</h4>
+                <ul>
+                    <li><strong>Centralized Certificate Management:</strong> Manage SSL certificates at the ingress level</li>
+                    <li><strong>Reduced Backend Complexity:</strong> Backend services only handle HTTP traffic</li>
+                    <li><strong>Performance Optimization:</strong> SSL offloading reduces CPU load on application pods</li>
+                    <li><strong>Security Headers:</strong> Consistently apply security headers across all services</li>
+                    <li><strong>Certificate Automation:</strong> Integration with cert-manager for automatic certificate provisioning</li>
+                </ul>
+            </div>
+            
+            <div class="warning">
+                <h4>⚠️ Production Considerations</h4>
+                <ul>
+                    <li>Use proper CA-signed certificates, not self-signed ones</li>
+                    <li>Implement certificate rotation and monitoring</li>
+                    <li>Configure appropriate cipher suites for security and compatibility</li>
+                    <li>Monitor SSL certificate expiration dates</li>
+                    <li>Use OCSP stapling for better performance</li>
+                    <li>Consider end-to-end encryption for highly sensitive applications</li>
+                </ul>
+            </div>
+            
+            <h2>🔧 Configuration Examples</h2>
+            
+            <h3>Cert-Manager ClusterIssuer</h3>
+            <div class="command">apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx</div>
+            
+            <h3>Custom SSL Configuration</h3>
+            <div class="command">nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384"
+nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers: "true"
+nginx.ingress.kubernetes.io/ssl-session-cache: "shared:SSL:10m"
+nginx.ingress.kubernetes.io/ssl-session-timeout: "10m"</div>
+        </div>
+    </body>
+    </html>
+
+---
+# Test pod for SSL testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ssl-test-client
+  namespace: ssl-termination-demo
+  labels:
+    app: test-client
+    role: debugging
+spec:
+  containers:
+  - name: test-tools
+    image: alpine:3.18
+    command: 
+    - sh
+    - -c
+    - |
+      apk add --no-cache curl openssl
+      sleep 3600
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+  restartPolicy: Never

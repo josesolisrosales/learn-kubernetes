@@ -1,0 +1,814 @@
+# Cross-Namespace Communication Demo
+# Demonstrates service discovery and communication across different namespaces
+# Shows realistic microservices architecture with namespace isolation
+
+---
+# Frontend namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: frontend
+  labels:
+    purpose: cross-namespace-demo
+    tier: presentation
+    network-policy: enabled
+
+---
+# Backend namespace  
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backend
+  labels:
+    purpose: cross-namespace-demo
+    tier: business-logic
+    network-policy: enabled
+
+---
+# Database namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: database
+  labels:
+    purpose: cross-namespace-demo
+    tier: data
+    network-policy: enabled
+
+---
+# Monitoring namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    purpose: cross-namespace-demo
+    tier: observability
+    network-policy: enabled
+
+---
+# Frontend application deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-app
+  namespace: frontend
+  labels:
+    app: frontend-app
+    tier: presentation
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend-app
+  template:
+    metadata:
+      labels:
+        app: frontend-app
+        tier: presentation
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: frontend-config
+      - name: content
+        configMap:
+          name: frontend-content
+
+---
+# Backend API deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: backend
+  labels:
+    app: backend-api
+    tier: business-logic
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+        tier: business-logic
+    spec:
+      containers:
+      - name: api-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: backend-config
+
+---
+# Database simulation deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-service
+  namespace: database
+  labels:
+    app: database-service
+    tier: data
+spec:
+  replicas: 1  # Single instance for simplicity
+  selector:
+    matchLabels:
+      app: database-service
+  template:
+    metadata:
+      labels:
+        app: database-service
+        tier: data
+    spec:
+      containers:
+      - name: db-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /db/health
+            port: 5432
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /db/health
+            port: 5432
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: database-config
+
+---
+# Monitoring service deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-service
+  namespace: monitoring
+  labels:
+    app: monitoring-service
+    tier: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring-service
+  template:
+    metadata:
+      labels:
+        app: monitoring-service
+        tier: observability
+    spec:
+      containers:
+      - name: monitor-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 9090
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: monitoring-config
+
+---
+# Services for cross-namespace communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: frontend
+  labels:
+    app: frontend-app
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: backend
+  labels:
+    app: backend-api
+spec:
+  type: ClusterIP
+  selector:
+    app: backend-api
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: database
+  labels:
+    app: database-service
+spec:
+  type: ClusterIP
+  selector:
+    app: database-service
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+  namespace: monitoring
+  labels:
+    app: monitoring-service
+spec:
+  type: ClusterIP
+  selector:
+    app: monitoring-service
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+
+---
+# Test pods for cross-namespace communication
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-test-pod
+  namespace: frontend
+  labels:
+    app: test-pod
+    role: debugging
+spec:
+  containers:
+  - name: test-tools
+    image: nicolaka/netshoot:v0.11
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-test-pod
+  namespace: backend
+  labels:
+    app: test-pod
+    role: debugging
+spec:
+  containers:
+  - name: test-tools
+    image: nicolaka/netshoot:v0.11
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# Network Policy to allow cross-namespace communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cross-namespace
+  namespace: backend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from frontend namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: presentation
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: observability
+  egress:
+  # Allow traffic to database namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tier: data
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access
+  namespace: database
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow traffic only from backend namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: business-logic
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: observability
+
+---
+# ConfigMaps for each service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: frontend
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Service "Frontend" always;
+        add_header X-Namespace "frontend" always;
+        add_header X-Pod-Name $hostname always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"frontend","namespace":"frontend","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Proxy to backend service in different namespace
+        location /api/ {
+            proxy_pass http://backend-service.backend:8080/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            add_header X-Proxied-To "backend-service.backend:8080" always;
+        }
+        
+        # Health check for backend via proxy
+        location /backend-health {
+            proxy_pass http://backend-service.backend:8080/api/health;
+            add_header X-Cross-Namespace-Call "frontend->backend" always;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: backend
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        
+        add_header X-Service "Backend-API" always;
+        add_header X-Namespace "backend" always; 
+        add_header X-Pod-Name $hostname always;
+        
+        location /api/health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"backend","namespace":"backend","pod":"$hostname","database_connection":"connected"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/users {
+            access_log off;
+            return 200 '{"users":[{"id":1,"name":"John Doe"},{"id":2,"name":"Jane Smith"}],"source":"backend-api","namespace":"backend","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/database-test {
+            # Simulate database call to different namespace
+            proxy_pass http://database-service.database:5432/db/query;
+            proxy_set_header X-Requesting-Service "backend-api";
+            add_header X-Cross-Namespace-Call "backend->database" always;
+        }
+        
+        location / {
+            return 200 '{"service":"backend-api","namespace":"backend","available_endpoints":["/api/health","/api/users","/api/database-test"],"cross_namespace_access":{"database":"database-service.database:5432"}}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: database
+data:
+  default.conf: |
+    server {
+        listen 5432;
+        server_name _;
+        
+        add_header X-Service "Database" always;
+        add_header X-Namespace "database" always;
+        add_header X-Pod-Name $hostname always;
+        
+        location /db/health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"database","namespace":"database","pod":"$hostname","connections":{"active":3,"max":100}}';
+            add_header Content-Type application/json;
+        }
+        
+        location /db/query {
+            access_log off;
+            return 200 '{"query_result":{"rows":5,"execution_time":"12ms"},"database":"postgresql","namespace":"database","pod":"$hostname","requesting_service":"$http_x_requesting_service"}';
+            add_header Content-Type application/json;
+        }
+        
+        location / {
+            return 200 '{"service":"database","namespace":"database","type":"postgresql","status":"running","allowed_namespaces":["backend"]}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: monitoring
+data:
+  default.conf: |
+    server {
+        listen 9090;
+        server_name _;
+        
+        add_header X-Service "Monitoring" always;
+        add_header X-Namespace "monitoring" always;
+        add_header X-Pod-Name $hostname always;
+        
+        location /metrics {
+            access_log off;
+            return 200 '# HELP namespace_services_total Total services per namespace\n# TYPE namespace_services_total gauge\nnamespace_services_total{namespace="frontend"} 1\nnamespace_services_total{namespace="backend"} 1\nnamespace_services_total{namespace="database"} 1\nnamespace_services_total{namespace="monitoring"} 1\n# HELP cross_namespace_requests_total Cross-namespace requests\n# TYPE cross_namespace_requests_total counter\ncross_namespace_requests_total{from="frontend",to="backend"} 42\ncross_namespace_requests_total{from="backend",to="database"} 156\n';
+            add_header Content-Type text/plain;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"monitoring","namespace":"monitoring","monitored_namespaces":["frontend","backend","database"]}';
+            add_header Content-Type application/json;
+        }
+        
+        location / {
+            return 200 '{"service":"monitoring","namespace":"monitoring","endpoints":["/metrics","/health"],"purpose":"cross-namespace monitoring"}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: frontend
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Cross-Namespace Communication Demo</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .namespace-type {
+                background: #00b894;
+                padding: 10px 20px;
+                border-radius: 25px;
+                display: inline-block;
+                margin-bottom: 20px;
+                font-weight: bold;
+            }
+            .namespace-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .namespace-card {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 4px solid #00b894;
+            }
+            .namespace-card.frontend { border-left-color: #74b9ff; }
+            .namespace-card.backend { border-left-color: #fdcb6e; }
+            .namespace-card.database { border-left-color: #fd79a8; }
+            .namespace-card.monitoring { border-left-color: #a29bfe; }
+            .communication-flow {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-family: monospace;
+                font-size: 14px;
+            }
+            .test-button {
+                background: #00b894;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin: 5px;
+                font-size: 12px;
+            }
+            .test-button:hover {
+                background: #00a085;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 15px;
+                border-radius: 8px;
+                margin: 10px 0;
+                font-family: monospace;
+                font-size: 12px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .command {
+                background: #2d3748;
+                color: #e2e8f0;
+                padding: 15px;
+                border-radius: 8px;
+                font-family: 'Courier New', monospace;
+                margin: 10px 0;
+                overflow-x: auto;
+            }
+        </style>
+        <script>
+            function testCrossNamespace(endpoint, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing cross-namespace communication...';
+                
+                fetch(endpoint)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="namespace-type">🌐 Cross-Namespace Communication</div>
+            <h1>Kubernetes Namespace Isolation & Communication</h1>
+            
+            <h2>🏗️ Architecture Overview</h2>
+            <div class="namespace-grid">
+                <div class="namespace-card frontend">
+                    <h3>🎨 Frontend Namespace</h3>
+                    <p>Presentation tier serving web interface</p>
+                    <p><strong>Service:</strong> frontend-service</p>
+                    <p><strong>Access:</strong> External via LoadBalancer</p>
+                </div>
+                
+                <div class="namespace-card backend">
+                    <h3>⚙️ Backend Namespace</h3>
+                    <p>Business logic and API services</p>
+                    <p><strong>Service:</strong> backend-service</p>
+                    <p><strong>Access:</strong> From frontend via FQDN</p>
+                </div>
+                
+                <div class="namespace-card database">
+                    <h3>🗄️ Database Namespace</h3>
+                    <p>Data persistence layer</p>
+                    <p><strong>Service:</strong> database-service</p>
+                    <p><strong>Access:</strong> From backend only</p>
+                </div>
+                
+                <div class="namespace-card monitoring">
+                    <h3>📊 Monitoring Namespace</h3>
+                    <p>Observability and metrics collection</p>
+                    <p><strong>Service:</strong> monitoring-service</p>
+                    <p><strong>Access:</strong> Cluster-wide read access</p>
+                </div>
+            </div>
+            
+            <h2>🔄 Communication Flow</h2>
+            <div class="communication-flow">
+User → Frontend (frontend namespace)
+  ↓
+Frontend → Backend (backend-service.backend:8080)
+  ↓
+Backend → Database (database-service.database:5432)
+  ↓
+All Services → Monitoring (monitoring-service.monitoring:9090)
+            </div>
+            
+            <h2>🧪 Test Cross-Namespace Communication</h2>
+            
+            <h3>Frontend → Backend</h3>
+            <button class="test-button" onclick="testCrossNamespace('/backend-health', 'backend-test')">Test Backend Health</button>
+            <button class="test-button" onclick="testCrossNamespace('/api/users', 'users-test')">Get Users</button>
+            <div id="backend-test" class="test-result" style="display: none;"></div>
+            <div id="users-test" class="test-result" style="display: none;"></div>
+            
+            <h3>Backend → Database</h3>
+            <button class="test-button" onclick="testCrossNamespace('/api/database-test', 'db-test')">Test Database Query</button>
+            <div id="db-test" class="test-result" style="display: none;"></div>
+            
+            <h2>🔍 DNS Resolution Commands</h2>
+            
+            <h3>From Frontend Namespace:</h3>
+            <div class="command"># Test cross-namespace DNS resolution
+kubectl exec -it frontend-test-pod -n frontend -- nslookup backend-service.backend
+
+# Test FQDN resolution
+kubectl exec -it frontend-test-pod -n frontend -- nslookup backend-service.backend.svc.cluster.local
+
+# Test HTTP communication
+kubectl exec -it frontend-test-pod -n frontend -- curl http://backend-service.backend:8080/api/health</div>
+            
+            <h3>From Backend Namespace:</h3>
+            <div class="command"># Test database connection
+kubectl exec -it backend-test-pod -n backend -- nslookup database-service.database
+
+# Test database query
+kubectl exec -it backend-test-pod -n backend -- curl http://database-service.database:5432/db/health</div>
+            
+            <h2>🛡️ Network Policy Testing</h2>
+            <div class="command"># Test allowed connections
+kubectl exec -it frontend-test-pod -n frontend -- curl http://backend-service.backend:8080/api/health
+
+# Test blocked connections (should fail)
+kubectl exec -it frontend-test-pod -n frontend -- curl http://database-service.database:5432/db/health
+
+# View network policies
+kubectl get networkpolicies -A</div>
+            
+            <h2>📋 Key Concepts</h2>
+            <ul>
+                <li><strong>Namespace Isolation:</strong> Logical separation of resources</li>
+                <li><strong>FQDN Resolution:</strong> service-name.namespace.svc.cluster.local</li>
+                <li><strong>Network Policies:</strong> Control traffic flow between namespaces</li>
+                <li><strong>Service Discovery:</strong> DNS-based service location</li>
+                <li><strong>Security Boundaries:</strong> Namespace-based access control</li>
+            </ul>
+            
+            <h2>🔐 Security Best Practices</h2>
+            <ul>
+                <li>Use NetworkPolicies to restrict cross-namespace communication</li>
+                <li>Implement least-privilege access between services</li>
+                <li>Monitor cross-namespace traffic patterns</li>
+                <li>Use service accounts for fine-grained permissions</li>
+                <li>Separate environments with different namespaces</li>
+            </ul>
+        </div>
+    </body>
+    </html>

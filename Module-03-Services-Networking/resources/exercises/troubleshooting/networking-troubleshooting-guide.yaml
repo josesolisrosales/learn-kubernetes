@@ -1,0 +1,883 @@
+# Kubernetes Networking Troubleshooting Guide
+# Comprehensive troubleshooting scenarios and solutions for common networking issues
+# Includes broken configurations to practice debugging skills
+
+---
+# Namespace for troubleshooting exercises
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: troubleshooting-lab
+  labels:
+    purpose: troubleshooting
+    type: educational
+
+---
+# Scenario 1: DNS Resolution Issues
+# This deployment has DNS problems
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns-issue-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: dns-resolution
+    issue-type: dns
+  annotations:
+    troubleshooting.kubernetes.io/issue: "DNS resolution failing"
+    troubleshooting.kubernetes.io/solution: "Check CoreDNS, service names, and namespace"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dns-issue-app
+  template:
+    metadata:
+      labels:
+        app: dns-issue-app
+        scenario: dns-resolution
+    spec:
+      containers:
+      - name: client
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          echo "Testing DNS resolution..."
+          # This will fail - service name is incorrect
+          while true; do
+            echo "Trying to resolve: wrong-service-name.troubleshooting-lab.svc.cluster.local"
+            nslookup wrong-service-name.troubleshooting-lab.svc.cluster.local || echo "DNS resolution failed"
+            echo "Trying to connect to: non-existent-service:80"
+            nc -zv non-existent-service 80 || echo "Connection failed"
+            sleep 30
+          done
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+
+---
+# Correct service for DNS troubleshooting
+apiVersion: v1
+kind: Service
+metadata:
+  name: correct-service-name
+  namespace: troubleshooting-lab
+  labels:
+    scenario: dns-resolution
+spec:
+  type: ClusterIP
+  selector:
+    app: target-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# Target app for DNS resolution
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: dns-resolution
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: target-app
+  template:
+    metadata:
+      labels:
+        app: target-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+
+---
+# Scenario 2: Network Policy Blocking Traffic
+# This network policy is too restrictive
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: overly-restrictive-policy
+  namespace: troubleshooting-lab
+  labels:
+    scenario: network-policy
+    issue-type: connectivity
+  annotations:
+    troubleshooting.kubernetes.io/issue: "Network policy blocking legitimate traffic"
+    troubleshooting.kubernetes.io/solution: "Review and adjust ingress/egress rules"
+spec:
+  podSelector:
+    matchLabels:
+      app: restricted-app
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Too restrictive - only allows traffic from non-existent pods
+  - from:
+    - podSelector:
+        matchLabels:
+          app: non-existent-source
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  # Blocks DNS resolution
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443  # Only allows HTTPS, not DNS
+
+---
+# App affected by restrictive network policy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restricted-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: network-policy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: restricted-app
+  template:
+    metadata:
+      labels:
+        app: restricted-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Service for restricted app
+apiVersion: v1
+kind: Service
+metadata:
+  name: restricted-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: network-policy
+spec:
+  type: ClusterIP
+  selector:
+    app: restricted-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# Client trying to access restricted app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: network-policy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client-app
+  template:
+    metadata:
+      labels:
+        app: client-app
+    spec:
+      containers:
+      - name: client
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          apk add --no-cache curl
+          while true; do
+            echo "Trying to connect to restricted-service..."
+            curl --connect-timeout 5 http://restricted-service.troubleshooting-lab.svc.cluster.local || echo "Connection failed"
+            sleep 20
+          done
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+
+---
+# Scenario 3: Service Selector Mismatch
+# Service selector doesn't match pod labels
+apiVersion: v1
+kind: Service
+metadata:
+  name: mismatched-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: selector-mismatch
+    issue-type: service-discovery
+  annotations:
+    troubleshooting.kubernetes.io/issue: "Service selector doesn't match pod labels"
+    troubleshooting.kubernetes.io/solution: "Check service selector and pod labels alignment"
+spec:
+  type: ClusterIP
+  selector:
+    app: wrong-label-value  # This doesn't match the actual pod labels
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+
+---
+# Deployment with mismatched labels
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: label-mismatch-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: selector-mismatch
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: correct-label-value  # This is the correct label
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: correct-label-value  # Pod has this label
+        tier: frontend
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+        command:
+        - sh
+        - -c
+        - |
+          # Configure nginx to listen on port 8080
+          sed -i 's/listen       80;/listen       8080;/g' /etc/nginx/conf.d/default.conf
+          nginx -g 'daemon off;'
+
+---
+# Scenario 4: Port Configuration Issues
+# Wrong ports configured in service and deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: port-mismatch-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: port-mismatch
+    issue-type: connectivity
+  annotations:
+    troubleshooting.kubernetes.io/issue: "Port configuration mismatch between service and pods"
+    troubleshooting.kubernetes.io/solution: "Align service targetPort with container port"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: port-mismatch-app
+  template:
+    metadata:
+      labels:
+        app: port-mismatch-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80  # Container listens on port 80
+        env:
+        - name: PORT
+          value: "80"
+
+---
+# Service with wrong target port
+apiVersion: v1
+kind: Service
+metadata:
+  name: port-mismatch-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: port-mismatch
+spec:
+  type: ClusterIP
+  selector:
+    app: port-mismatch-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080  # Wrong! Container is on port 80, not 8080
+
+---
+# Scenario 5: Ingress Configuration Issues
+# Ingress with incorrect backend service reference
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: broken-ingress
+  namespace: troubleshooting-lab
+  labels:
+    scenario: ingress-config
+    issue-type: ingress
+  annotations:
+    troubleshooting.kubernetes.io/issue: "Ingress pointing to non-existent service"
+    troubleshooting.kubernetes.io/solution: "Check backend service name and port"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: broken.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: non-existent-backend  # Service doesn't exist
+            port:
+              number: 80
+
+---
+# Actual backend service with different name
+apiVersion: v1
+kind: Service
+metadata:
+  name: actual-backend-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: ingress-config
+spec:
+  type: ClusterIP
+  selector:
+    app: backend-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# Backend app for ingress
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: ingress-config
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-app
+  template:
+    metadata:
+      labels:
+        app: backend-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+
+---
+# Scenario 6: Resource Constraints Causing Issues
+# Deployment with insufficient resources causing connectivity issues
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-starved-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: resource-limits
+    issue-type: performance
+  annotations:
+    troubleshooting.kubernetes.io/issue: "Insufficient resources causing timeouts"
+    troubleshooting.kubernetes.io/solution: "Review and adjust resource requests/limits"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: resource-starved-app
+  template:
+    metadata:
+      labels:
+        app: resource-starved-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "1Mi"    # Too low
+            cpu: "1m"        # Too low
+          limits:
+            memory: "2Mi"    # Too low
+            cpu: "2m"        # Too low
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 1    # Too aggressive
+          failureThreshold: 1  # Too strict
+
+---
+# Troubleshooting Tools Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: troubleshooting-toolkit
+  namespace: troubleshooting-lab
+  labels:
+    role: troubleshooting
+    tools: networking
+  annotations:
+    description: "Pod with networking troubleshooting tools"
+spec:
+  containers:
+  - name: netshoot
+    image: nicolaka/netshoot:latest
+    command:
+    - sleep
+    - "3600"
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+  - name: debug-utils
+    image: alpine:3.18
+    command:
+    - sh
+    - -c
+    - |
+      apk add --no-cache curl telnet nmap-ncat bind-tools tcpdump iperf3 strace htop
+      echo "Troubleshooting tools ready!"
+      sleep 3600
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "25m"
+  restartPolicy: Never
+
+---
+# Comprehensive Troubleshooting Guide ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: troubleshooting-guide
+  namespace: troubleshooting-lab
+  labels:
+    type: documentation
+data:
+  troubleshooting-guide.md: |
+    # Kubernetes Networking Troubleshooting Guide
+    
+    ## Common Issues and Solutions
+    
+    ### 1. DNS Resolution Issues
+    
+    **Symptoms:**
+    - Services not resolving by name
+    - "Name or service not known" errors
+    - Intermittent connectivity issues
+    
+    **Debugging Commands:**
+    ```bash
+    # Test DNS resolution
+    kubectl exec -it <pod> -- nslookup <service-name>
+    kubectl exec -it <pod> -- nslookup <service-name>.<namespace>.svc.cluster.local
+    
+    # Check CoreDNS status
+    kubectl get pods -n kube-system -l k8s-app=kube-dns
+    kubectl logs -n kube-system -l k8s-app=kube-dns
+    
+    # Check DNS configuration
+    kubectl exec -it <pod> -- cat /etc/resolv.conf
+    ```
+    
+    **Common Solutions:**
+    - Verify service exists: `kubectl get svc -n <namespace>`
+    - Check CoreDNS configuration: `kubectl get configmap coredns -n kube-system -o yaml`
+    - Restart CoreDNS: `kubectl rollout restart deployment coredns -n kube-system`
+    
+    ### 2. Service Discovery Issues
+    
+    **Symptoms:**
+    - Service endpoints are empty
+    - Traffic not reaching pods
+    - Connection refused errors
+    
+    **Debugging Commands:**
+    ```bash
+    # Check service and endpoints
+    kubectl get svc <service-name> -o wide
+    kubectl get endpoints <service-name>
+    kubectl describe svc <service-name>
+    
+    # Verify pod labels
+    kubectl get pods --show-labels
+    kubectl describe service <service-name>
+    ```
+    
+    **Common Solutions:**
+    - Fix service selector to match pod labels
+    - Ensure pods are ready and healthy
+    - Check service port configuration
+    
+    ### 3. Network Policy Issues
+    
+    **Symptoms:**
+    - Sudden connectivity loss after policy application
+    - Timeout errors between services
+    - DNS resolution failing
+    
+    **Debugging Commands:**
+    ```bash
+    # List network policies
+    kubectl get networkpolicies
+    kubectl describe networkpolicy <policy-name>
+    
+    # Test connectivity
+    kubectl exec -it <source-pod> -- curl <target-service>
+    kubectl exec -it <source-pod> -- nc -zv <target-service> <port>
+    ```
+    
+    **Common Solutions:**
+    - Add DNS egress rules (port 53 UDP)
+    - Review ingress/egress rules
+    - Check pod label selectors in policies
+    
+    ### 4. Port Configuration Issues
+    
+    **Symptoms:**
+    - Connection refused errors
+    - Service health checks failing
+    - Ingress not routing traffic
+    
+    **Debugging Commands:**
+    ```bash
+    # Check service configuration
+    kubectl get svc <service-name> -o yaml
+    kubectl get pods -o wide
+    
+    # Test port connectivity
+    kubectl exec -it <pod> -- netstat -tuln
+    kubectl exec -it <pod> -- ss -tuln
+    ```
+    
+    **Common Solutions:**
+    - Align service targetPort with container port
+    - Verify container is listening on expected port
+    - Check ingress backend port configuration
+    
+    ### 5. Ingress Issues
+    
+    **Symptoms:**
+    - 404 errors from ingress
+    - SSL/TLS certificate issues
+    - Backend service not reachable
+    
+    **Debugging Commands:**
+    ```bash
+    # Check ingress status
+    kubectl get ingress
+    kubectl describe ingress <ingress-name>
+    
+    # Check ingress controller
+    kubectl get pods -n ingress-nginx
+    kubectl logs -n ingress-nginx <ingress-controller-pod>
+    
+    # Test backend connectivity
+    kubectl exec -it <pod> -- curl <backend-service>
+    ```
+    
+    **Common Solutions:**
+    - Verify backend service exists and is healthy
+    - Check ingress annotations and rules
+    - Ensure ingress controller is running
+    - Verify DNS/hosts file for testing
+    
+    ## Troubleshooting Workflow
+    
+    1. **Identify the Problem Layer:**
+       - DNS (Layer 3)
+       - Service Discovery (Layer 4)
+       - Application (Layer 7)
+    
+    2. **Check Basic Connectivity:**
+       ```bash
+       kubectl exec -it <pod> -- ping <target>
+       kubectl exec -it <pod> -- telnet <service> <port>
+       kubectl exec -it <pod> -- curl -v <url>
+       ```
+    
+    3. **Verify Kubernetes Objects:**
+       ```bash
+       kubectl get pods,svc,endpoints,ingress
+       kubectl describe <resource-type> <resource-name>
+       ```
+    
+    4. **Check Logs:**
+       ```bash
+       kubectl logs <pod-name>
+       kubectl logs -n kube-system <system-pod>
+       ```
+    
+    5. **Network Policy Testing:**
+       ```bash
+       # Temporarily disable network policies for testing
+       kubectl label namespace <namespace> name=<namespace>
+       ```
+    
+    ## Advanced Debugging Tools
+    
+    ```bash
+    # Network packet capture
+    kubectl exec -it troubleshooting-toolkit -- tcpdump -i any -w /tmp/capture.pcap
+    
+    # Network performance testing
+    kubectl exec -it <pod1> -- iperf3 -s
+    kubectl exec -it <pod2> -- iperf3 -c <pod1-ip>
+    
+    # DNS debugging
+    kubectl exec -it troubleshooting-toolkit -- dig <service-name>
+    kubectl exec -it troubleshooting-toolkit -- nslookup <service-name>
+    
+    # Port scanning
+    kubectl exec -it troubleshooting-toolkit -- nmap <target-ip>
+    ```
+    
+    ## Prevention Best Practices
+    
+    1. **Consistent Naming:** Use clear, consistent naming for services and deployments
+    2. **Label Management:** Maintain consistent labeling strategy
+    3. **Resource Limits:** Set appropriate resource requests and limits
+    4. **Health Checks:** Implement proper readiness and liveness probes
+    5. **Network Policies:** Start with permissive policies, then restrict
+    6. **Monitoring:** Implement comprehensive monitoring and alerting
+    7. **Documentation:** Document network dependencies and policies
+
+  common-commands.sh: |
+    #!/bin/bash
+    # Common Kubernetes networking troubleshooting commands
+    
+    echo "=== Kubernetes Networking Troubleshooting ==="
+    echo ""
+    
+    # Function to check DNS resolution
+    check_dns() {
+        echo "Checking DNS resolution..."
+        kubectl exec -it troubleshooting-toolkit -n troubleshooting-lab -- nslookup kubernetes.default.svc.cluster.local
+        kubectl exec -it troubleshooting-toolkit -n troubleshooting-lab -- nslookup google.com
+    }
+    
+    # Function to test service connectivity
+    test_connectivity() {
+        echo "Testing service connectivity..."
+        kubectl get svc -n troubleshooting-lab
+        kubectl get endpoints -n troubleshooting-lab
+    }
+    
+    # Function to check network policies
+    check_policies() {
+        echo "Checking network policies..."
+        kubectl get networkpolicies -n troubleshooting-lab
+        kubectl describe networkpolicies overly-restrictive-policy -n troubleshooting-lab
+    }
+    
+    # Function to verify ingress
+    check_ingress() {
+        echo "Checking ingress configuration..."
+        kubectl get ingress -n troubleshooting-lab
+        kubectl describe ingress broken-ingress -n troubleshooting-lab
+    }
+    
+    # Function to check resource usage
+    check_resources() {
+        echo "Checking resource usage..."
+        kubectl top pods -n troubleshooting-lab
+        kubectl describe pod resource-starved-app -n troubleshooting-lab
+    }
+    
+    # Main menu
+    case "$1" in
+        dns) check_dns ;;
+        connectivity) test_connectivity ;;
+        policies) check_policies ;;
+        ingress) check_ingress ;;
+        resources) check_resources ;;
+        *)
+            echo "Usage: $0 {dns|connectivity|policies|ingress|resources}"
+            echo ""
+            echo "Available commands:"
+            echo "  dns          - Test DNS resolution"
+            echo "  connectivity - Test service connectivity"
+            echo "  policies     - Check network policies"
+            echo "  ingress      - Check ingress configuration"
+            echo "  resources    - Check resource usage"
+            ;;
+    esac
+
+---
+# Fixed versions of the broken configurations
+# These can be applied after students identify the issues
+
+# Fixed DNS resolution app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns-fixed-app
+  namespace: troubleshooting-lab
+  labels:
+    scenario: dns-resolution-fixed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dns-fixed-app
+  template:
+    metadata:
+      labels:
+        app: dns-fixed-app
+    spec:
+      containers:
+      - name: client
+        image: alpine:3.18
+        command:
+        - sh
+        - -c
+        - |
+          apk add --no-cache curl bind-tools
+          echo "Testing DNS resolution (FIXED)..."
+          while true; do
+            echo "Resolving: correct-service-name.troubleshooting-lab.svc.cluster.local"
+            nslookup correct-service-name.troubleshooting-lab.svc.cluster.local
+            echo "Connecting to: correct-service-name:80"
+            curl --connect-timeout 5 http://correct-service-name.troubleshooting-lab.svc.cluster.local
+            sleep 30
+          done
+
+---
+# Fixed network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fixed-network-policy
+  namespace: troubleshooting-lab
+  labels:
+    scenario: network-policy-fixed
+spec:
+  podSelector:
+    matchLabels:
+      app: restricted-app
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from client-app
+  - from:
+    - podSelector:
+        matchLabels:
+          app: client-app
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow other necessary connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Fixed service selector
+apiVersion: v1
+kind: Service
+metadata:
+  name: fixed-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: selector-fixed
+spec:
+  type: ClusterIP
+  selector:
+    app: correct-label-value  # Now matches pod labels
+    tier: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+
+---
+# Fixed port configuration
+apiVersion: v1
+kind: Service
+metadata:
+  name: port-fixed-service
+  namespace: troubleshooting-lab
+  labels:
+    scenario: port-fixed
+spec:
+  type: ClusterIP
+  selector:
+    app: port-mismatch-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80  # Now matches container port
+
+---
+# Fixed ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fixed-ingress
+  namespace: troubleshooting-lab
+  labels:
+    scenario: ingress-fixed
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: fixed.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: actual-backend-service  # Now points to existing service
+            port:
+              number: 80

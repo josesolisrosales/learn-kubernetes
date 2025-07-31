@@ -1,0 +1,585 @@
+# DNS Service Discovery Demo
+# Demonstrates DNS resolution patterns and service discovery in Kubernetes
+# Shows same-namespace, cross-namespace, and FQDN resolution
+
+---
+# Namespace for DNS demo services
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dns-demo
+  labels:
+    purpose: dns-service-discovery
+    demo: dns-resolution
+
+---
+# Frontend service in dns-demo namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-service
+  namespace: dns-demo
+  labels:
+    app: frontend-service
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend-service
+  template:
+    metadata:
+      labels:
+        app: frontend-service
+        tier: frontend
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: frontend-config
+      - name: content
+        configMap:
+          name: frontend-content
+
+---
+# Backend service in dns-demo namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-service
+  namespace: dns-demo
+  labels:
+    app: backend-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-service
+  template:
+    metadata:
+      labels:
+        app: backend-service
+        tier: backend
+    spec:
+      containers:
+      - name: api-server
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: backend-config
+
+---
+# Services for DNS resolution
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: dns-demo
+  labels:
+    app: frontend-service
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend-service
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: dns-demo
+  labels:
+    app: backend-service
+spec:
+  type: ClusterIP
+  selector:
+    app: backend-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+
+---
+# Headless service for direct pod access
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-headless
+  namespace: dns-demo
+  labels:
+    app: backend-service
+    service-type: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: backend-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+
+---
+# DNS test pod with network tools
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dns-test-pod
+  namespace: dns-demo
+  labels:
+    app: dns-test
+    role: debugging
+spec:
+  containers:
+  - name: dns-tools
+    image: nicolaka/netshoot:v0.11
+    command: ['sleep', '3600']
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    env:
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+
+---
+# Simple test pod with basic tools
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple-test-pod
+  namespace: dns-demo
+  labels:
+    app: simple-test
+    role: debugging
+spec:
+  containers:
+  - name: test-tools
+    image: busybox:1.35
+    command: 
+    - sh
+    - -c
+    - |
+      # Install basic networking tools
+      while true; do
+        echo "DNS Test Pod Ready - $(date)"
+        sleep 300
+      done
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "25m"
+
+---
+# ConfigMap for frontend nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: dns-demo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        add_header X-Service-Type "Frontend" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Namespace "dns-demo" always;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        location /health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"frontend","namespace":"dns-demo","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /dns-info {
+            access_log off;
+            return 200 '{"service_name":"frontend-service","namespace":"dns-demo","fqdn":"frontend-service.dns-demo.svc.cluster.local","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        # Proxy to backend service using DNS
+        location /api/ {
+            # Same namespace - short name
+            proxy_pass http://backend-service:8080/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            add_header X-Proxied-To "backend-service:8080" always;
+        }
+    }
+
+---
+# ConfigMap for backend nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: dns-demo
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        
+        add_header X-Service-Type "Backend" always;
+        add_header X-Pod-Name $hostname always;
+        add_header X-Namespace "dns-demo" always;
+        
+        root /usr/share/nginx/html;
+        
+        location /api/health {
+            access_log off;
+            return 200 '{"status":"healthy","service":"backend","namespace":"dns-demo","pod":"$hostname","timestamp":"$time_iso8601"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/dns-info {
+            access_log off;
+            return 200 '{"service_name":"backend-service","namespace":"dns-demo","fqdn":"backend-service.dns-demo.svc.cluster.local","pod":"$hostname"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/data {
+            access_log off;
+            return 200 '{"data":["item1","item2","item3"],"source":"backend-api","pod":"$hostname","namespace":"dns-demo"}';
+            add_header Content-Type application/json;
+        }
+        
+        location / {
+            return 200 '{"message":"Backend API","service":"backend-service","namespace":"dns-demo","available_endpoints":["/api/health","/api/dns-info","/api/data"]}';
+            add_header Content-Type application/json;
+        }
+    }
+
+---
+# ConfigMap for frontend content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: dns-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>DNS Service Discovery Demo</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1000px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            }
+            .dns-type {
+                background: #4CAF50;
+                padding: 10px 20px;
+                border-radius: 25px;
+                display: inline-block;
+                margin-bottom: 20px;
+                font-weight: bold;
+            }
+            .test-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .test-card {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 4px solid #4CAF50;
+            }
+            .command {
+                background: #2d3748;
+                color: #e2e8f0;
+                padding: 15px;
+                border-radius: 8px;
+                font-family: 'Courier New', monospace;
+                margin: 10px 0;
+                overflow-x: auto;
+            }
+            .dns-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                background: rgba(255, 255, 255, 0.9);
+                color: #333;
+                border-radius: 10px;
+                overflow: hidden;
+            }
+            .dns-table th, .dns-table td {
+                padding: 12px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+            .dns-table th {
+                background: #4CAF50;
+                color: white;
+                font-weight: bold;
+            }
+            .test-button {
+                background: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+                margin: 2px;
+            }
+            .test-button:hover {
+                background: #45a049;
+            }
+            .test-result {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+                font-family: monospace;
+                font-size: 12px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+        </style>
+        <script>
+            function testEndpoint(url, resultId) {
+                const resultDiv = document.getElementById(resultId);
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = 'Testing...';
+                
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        resultDiv.innerHTML = 'Error: ' + error.message;
+                    });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="dns-type">🔍 DNS Service Discovery</div>
+            <h1>Kubernetes DNS Resolution Demo</h1>
+            
+            <h2>📋 DNS Resolution Patterns</h2>
+            <table class="dns-table">
+                <thead>
+                    <tr>
+                        <th>DNS Name</th>
+                        <th>Scope</th>
+                        <th>Resolves To</th>
+                        <th>Use Case</th>
+                        <th>Test</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>backend-service</code></td>
+                        <td>Same Namespace</td>
+                        <td>Service ClusterIP</td>
+                        <td>Internal communication</td>
+                        <td><button class="test-button" onclick="testEndpoint('/api/health', 'same-ns-result')">Test</button></td>
+                    </tr>
+                    <tr>
+                        <td><code>backend-service.dns-demo</code></td>
+                        <td>Cross Namespace</td>
+                        <td>Service ClusterIP</td>
+                        <td>Cross-namespace access</td>
+                        <td><button class="test-button" onclick="testEndpoint('/api/dns-info', 'cross-ns-result')">Test</button></td>
+                    </tr>
+                    <tr>
+                        <td><code>backend-service.dns-demo.svc.cluster.local</code></td>
+                        <td>Fully Qualified</td>
+                        <td>Service ClusterIP</td>
+                        <td>Explicit resolution</td>
+                        <td><button class="test-button" onclick="testEndpoint('/api/data', 'fqdn-result')">Test</button></td>
+                    </tr>
+                    <tr>
+                        <td><code>backend-headless</code></td>
+                        <td>Headless Service</td>
+                        <td>Pod IPs directly</td>
+                        <td>Direct pod access</td>
+                        <td><button class="test-button" onclick="alert('Use nslookup from test pod')">Manual Test</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div id="same-ns-result" class="test-result" style="display: none;"></div>
+            <div id="cross-ns-result" class="test-result" style="display: none;"></div>
+            <div id="fqdn-result" class="test-result" style="display: none;"></div>
+            
+            <h2>🧪 Testing Commands</h2>
+            
+            <div class="test-grid">
+                <div class="test-card">
+                    <h3>Basic DNS Lookup</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- nslookup backend-service</div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>Cross-Namespace Lookup</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- nslookup backend-service.dns-demo</div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>FQDN Lookup</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- nslookup backend-service.dns-demo.svc.cluster.local</div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>Headless Service</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- nslookup backend-headless</div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>HTTP Test</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- curl http://backend-service:8080/api/health</div>
+                </div>
+                
+                <div class="test-card">
+                    <h3>DNS Debugging</h3>
+                    <div class="command">kubectl exec -it dns-test-pod -n dns-demo -- cat /etc/resolv.conf</div>
+                </div>
+            </div>
+            
+            <h2>🔍 Advanced DNS Tests</h2>
+            
+            <div class="command"># Test all DNS resolution patterns
+kubectl exec -it dns-test-pod -n dns-demo -- sh -c '
+echo "=== Same Namespace ==="
+nslookup backend-service
+
+echo "=== Cross Namespace ==="  
+nslookup backend-service.dns-demo
+
+echo "=== FQDN ==="
+nslookup backend-service.dns-demo.svc.cluster.local
+
+echo "=== Headless Service (returns pod IPs) ==="
+nslookup backend-headless
+
+echo "=== Reverse DNS ==="
+nslookup $(nslookup backend-service | grep Address | tail -1 | cut -d" " -f2)
+
+echo "=== DNS Configuration ==="
+cat /etc/resolv.conf
+'</div>
+
+            <h2>📚 DNS Concepts</h2>
+            <ul>
+                <li><strong>Short Names:</strong> Work within the same namespace</li>
+                <li><strong>Namespace Qualified:</strong> Access services in other namespaces</li>
+                <li><strong>FQDN:</strong> Fully qualified domain names for explicit resolution</li>
+                <li><strong>Headless Services:</strong> Return pod IPs instead of service IP</li>
+                <li><strong>SRV Records:</strong> Include port information for services</li>
+                <li><strong>Search Domains:</strong> Automatic domain completion</li>
+            </ul>
+            
+            <h2>🚀 Service Discovery Patterns</h2>
+            <div class="test-grid">
+                <div class="test-card">
+                    <h3>Environment Variables</h3>
+                    <p>Legacy method using env vars like <code>BACKEND_SERVICE_HOST</code></p>
+                </div>
+                
+                <div class="test-card">
+                    <h3>DNS-based (Recommended)</h3>
+                    <p>Modern approach using service DNS names</p>
+                </div>
+                
+                <div class="test-card">
+                    <h3>Service Mesh</h3>
+                    <p>Advanced service discovery with Istio/Linkerd</p>
+                </div>
+                
+                <div class="test-card">
+                    <h3>External Services</h3>
+                    <p>Mapping external services via ExternalName</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
